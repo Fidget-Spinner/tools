@@ -10,7 +10,7 @@ import dis
 import struct
 import sys
 import types
-from typing import Iterator, TypeVar
+from typing import Iterator, Protocol, TypeVar
 
 UNARY_NEGATIVE = dis.opmap["UNARY_NEGATIVE"]
 BUILD_TUPLE = dis.opmap["BUILD_TUPLE"]
@@ -22,6 +22,7 @@ def def_op(name: str, op: int) -> int:
     dis.opmap[name] = op
     return op
 
+
 lastop = 169
 LAZY_LOAD_CONSTANT = def_op("LAZY_LOAD_CONSTANT", lastop := lastop + 1)
 MAKE_STRING = def_op("MAKE_STRING", lastop := lastop + 1)
@@ -31,7 +32,9 @@ MAKE_FLOAT = def_op("MAKE_FLOAT", lastop := lastop + 1)
 MAKE_COMPLEX = def_op("MAKE_COMPLEX", lastop := lastop + 1)
 MAKE_CODE_OBJECT = def_op("MAKE_CODE_OBJECT", lastop := lastop + 1)
 MAKE_BYTES = def_op("MAKE_BYTES", lastop := lastop + 1)
-LOAD_COMMON_CONSTANT = def_op("LOAD_COMMON_CONSTANT", lastop := lastop + 1)  # None, False, True
+LOAD_COMMON_CONSTANT = def_op(
+    "LOAD_COMMON_CONSTANT", lastop := lastop + 1
+)  # None, False, True
 RETURN_CONSTANT = def_op("RETURN_CONSTANT", lastop := lastop + 1)
 
 
@@ -221,7 +224,15 @@ class CodeObject:
         )
 
 
-T = TypeVar("T")
+class BytesProducer(Protocol):
+    def get_bytes(self) -> bytes: ...
+
+
+class HasValue(Protocol):
+    value: object
+
+
+T = TypeVar("T", bound=HasValue)
 
 
 class Builder:
@@ -261,6 +272,49 @@ class Builder:
 
     def add_code(self, code: types.CodeType) -> int:
         return self.add(self.codeobjs, CodeObject(code, self))
+
+    def get_bytes(self) -> bytes:
+        code_section_size = 4 * len(self.codeobjs)
+        const_section_size = 4 + 4 * len(self.constants)
+        string_section_size = 4 + 4 * len(self.strings)
+        blob_section_size = 4 + 4 * len(self.blobs)
+        binary_section_start = (
+            16  # Header size
+            + code_section_size
+            + const_section_size
+            + string_section_size
+            + blob_section_size
+        )
+        binary_data = bytearray()
+        def helper(what: list[BytesProducer]) -> bytearray:
+            nonlocal binary_data
+            offsets = bytearray()
+            for i, thing in enumerate(what):
+                offsets += struct.pack("<L", i)
+                binary_data += thing.get_bytes()
+            return offsets
+
+        code_offsets = helper(self.codeobjs)
+        const_offsets = helper(self.constants)
+        string_offsets = helper(self.strings)
+        blob_offsets = helper(self.blobs)
+        binary_section_size = len(binary_data)
+        header = b".pyc" + struct.pack(
+            "<HHLL", 0, len(self.codeobjs), 0, binary_section_size
+        )
+        assert len(header) == 16
+        prefix = (
+            header
+            + code_offsets
+            + struct.pack("<L", len(const_offsets) // 4)
+            + const_offsets
+            + struct.pack("<L", len(string_offsets) // 4)
+            + string_offsets
+            + struct.pack("<L", len(blob_offsets) // 4)
+            + blob_offsets
+        )
+        assert len(prefix) == binary_section_start
+        return prefix + binary_data
 
 
 def all_code_objects(code: types.CodeType) -> Iterator[types.CodeType]:
@@ -311,6 +365,10 @@ def main():
             code = compile(f.read(), filename, "exec")
             add_everything(builder, code)
     report(builder)
+    pyc_data = builder.get_bytes()
+    with open("example.pyc", "wb") as f:
+        f.write(pyc_data)
+    print(f"Wrote {len(pyc_data)} bytes to example.pyc")
 
 
 if __name__ == "__main__":
