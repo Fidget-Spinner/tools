@@ -2,11 +2,31 @@
 
 See https://github.com/faster-cpython/ideas/issues/32
 and https://github.com/python/peps/compare/master...markshannon:pep-mappable-pyc-file
+
+This uses match/case (PEP 634) and hence needs Python 3.10.
+
+This doesn't follow the format proposed there exactly; in particular,
+I had to add a Blob section so MAKE_LONG, MAKE_FLOAT and MAKE_BYTES (new!)
+can use an index instead of having to encode an offset using EXTENDED_ARG.
+
+Also, I gave up on the metadata section for now.
+I'm assuming it won't make that much of a difference for a prototype.
+
+BTW, the way I intend to use the prototype is as follows:
+
+- Add the extra fields to PyCode_Object
+- Implement the new bytecodes in ceval.c
+- Add a hack to the unmarshal code (marshal.loads(), used by importlib)
+  to recognize the new format as a new data type and then just stop,
+  returning the entire blob.
+- *Manually* generate pyc files (essentially using this module) and test.
+
+We can then assess the performance and see where to go from there.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # I have forward references
 
-import dis
+import dis  # Where opname/opmap live, according to the docs
 import struct
 import sys
 import types
@@ -23,6 +43,7 @@ def def_op(name: str, op: int) -> int:
     return op
 
 
+# Extend the set of opcodes
 lastop = 169
 LAZY_LOAD_CONSTANT = def_op("LAZY_LOAD_CONSTANT", lastop := lastop + 1)
 MAKE_STRING = def_op("MAKE_STRING", lastop := lastop + 1)
