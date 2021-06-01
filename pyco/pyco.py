@@ -4,8 +4,11 @@ See https://github.com/faster-cpython/ideas/issues/32
 and https://github.com/python/peps/compare/master...markshannon:pep-mappable-pyc-file
 """
 
+from __future__ import annotations
+
 import dis
 import struct
+from typing import TypeVar
 
 UNARY_NEGATIVE = dis.opmap["UNARY_NEGATIVE"]
 BUILD_TUPLE = dis.opmap["BUILD_TUPLE"]
@@ -22,6 +25,8 @@ MAKE_INT = def_op("MAKE_INT", 170)
 MAKE_LONG = def_op("MAKE_LONG", 171)
 MAKE_FLOAT = def_op("MAKE_FLOAT", 172)
 MAKE_STRING = def_op("MAKE_STRING", 173)
+RETURN_CONSTANT = def_op("RETURN_CONSTANT", 179)
+LAZY_LOAD_CONSTANT = def_op("LAZY_LOAD_CONSTANT", 180)
 
 
 def encode_varint(i: int) -> bytes:
@@ -52,62 +57,41 @@ def encode_float(x: float) -> bytes:
 class LongInt:
     def __init__(self, value: int):
         self.value = value
-        self.index = -1
-        self.bytes = encode_varint(value)
+
+    def get_bytes(self) -> bytes:
+        return encode_varint(self.value)
 
 
 class Float:
-    def __init__(self, value: int):
+    def __init__(self, value: float):
         self.value = value
-        self.index = -1
-        self.bytes = encode_float(value)
+
+    def get_bytes(self) -> bytes:
+        return encode_float(self.value)
 
 
 class String:
     def __init__(self, value: str):
         self.value = value
-        self.index = -1
-        self.bytes = encode_varint(len(value)) + value.encode("utf-8")
+
+    def get_bytes(self) -> bytes:
+        return encode_varint(len(self.value)) + self.value.encode("utf-8")
 
 
-SomeConstant = LongInt | Float | String
+BlobConstant = LongInt | Float
 
 
-class Builder:
-    # TODO: Intern duplicates
+class ComplexConstant:
+    """Constant represented by code."""
 
-    def __init__(self):
-        self.constants: list[SomeConstant] = []
-
-    def add(self, thing: SomeConstant) -> int:
-        if thing.index < 0:
-            thing.index = len(self.constants)
-            self.constants.append(thing)
-        assert thing.index >= 0
-        return thing.index
-
-    def add_long(self, value: int) -> int:
-        return self.add(LongInt(value))
-
-    def add_float(self, value: float) -> int:
-        return self.add(Float(value))
-
-    def add_string(self, value: str) -> int:
-        return self.add(String(value))
-
-    def add_constant(self, value: object) -> int:
-        # TODO: API to add a generalized "Constant"
-        # (for which we generate code)
-        pass
-        
-
-
-class CodeGenerator:
-    """Generate code for a constant."""
-
-    def __init__(self, builder: Builder):
+    def __init__(self, value: object, builder: Builder):
+        self.value = value
         self.builder = builder
         self.instructions: list[tuple[int, int]] = []
+        self.index = -1
+
+    def set_index(self, index: int) -> None:
+        self.index = index
 
     def emit(self, opcode: int, oparg: int = 0):
         self.instructions.append((opcode, oparg))
@@ -130,15 +114,19 @@ class CodeGenerator:
             case tuple(t):
                 # TODO: Avoid needing a really big stack for large tuples
                 for item in t:
-                    self.generate(item)
+                    # TODO: But sometimes just self.generate(item)
+                    oparg = self.builder.add_constant(item)
+                    self.emit(LAZY_LOAD_CONSTANT, oparg)
                 self.emit(BUILD_TUPLE, len(t))
             case _:
                 raise TypeError(
                         f"Cannot generate code for "
                         f"{type(value).__name__} -- {value!r}")
                 assert False, repr(value)
+        self.emit(RETURN_CONSTANT, self.index)
 
     def get_bytes(self):
+        self.generate(self.value)
         data = bytearray()
         for opcode, oparg in self.instructions:
             assert isinstance(oparg, int)
@@ -156,11 +144,51 @@ class CodeGenerator:
         return bytes(data)
 
 
+AnyConstant = String | BlobConstant | ComplexConstant
+
+
+T = TypeVar("T")
+
+
+class Builder:
+    # TODO: Intern duplicates
+
+    def __init__(self):
+        self.strings: list[String] = []
+        self.blobs: list[BlobConstant] = []
+        self.constants: list[ComplexConstant] = []
+
+    def add(self, where: list[T], thing: T) -> int:
+        index = len(where)
+        where.append(thing)
+        return index
+
+    def add_string(self, value: str) -> int:
+        return self.add(self.strings, String(value))
+
+    def add_long(self, value: int) -> int:
+        return self.add(self.blobs, LongInt(value))
+
+    def add_float(self, value: float) -> int:
+        return self.add(self.blobs, Float(value))
+
+    def add_constant(self, value: object) -> int:
+        cc = ComplexConstant(value, self)
+        index = self.add(self.constants, cc)
+        cc.set_index(index)
+        return index
+
+
 def main():
     builder = Builder()
-    cg = CodeGenerator(builder)
-    cg.generate((0, 1000, -1, "Hi"))
-    dis.dis(cg.get_bytes())
+    builder.add_constant((0, 1000, -1, "Hi", 3.14))
+    for i, constant in enumerate(builder.constants):
+        print(f"Code for constant {i}")
+        dis.dis(constant.get_bytes())
+    for i, string in enumerate(builder.strings):
+        print(f"String {i} = {string.get_bytes()!r}")
+    for i, blob in enumerate(builder.blobs):
+        print(f"Blob {i} = {blob.get_bytes()!r}")
 
 
 if __name__ == "__main__":
