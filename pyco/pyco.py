@@ -22,17 +22,17 @@ def def_op(name: str, op: int) -> int:
     dis.opmap[name] = op
     return op
 
-
-MAKE_INT = def_op("MAKE_INT", 170)
-MAKE_LONG = def_op("MAKE_LONG", 171)
-MAKE_FLOAT = def_op("MAKE_FLOAT", 172)
-MAKE_COMPLEX = def_op("MAKE_COMPLEX", 173)
-MAKE_BYTES = def_op("MAKE_BYTES", 174)
-MAKE_STRING = def_op("MAKE_STRING", 175)
-MAKE_CODE_OBJECT = def_op("MAKE_CODE_OBJECT", 176)
-LOAD_COMMON_CONSTANT = def_op("LOAD_COMMON_CONSTANT", 177)  # None, False, True
-RETURN_CONSTANT = def_op("RETURN_CONSTANT", 179)
-LAZY_LOAD_CONSTANT = def_op("LAZY_LOAD_CONSTANT", 180)
+lastop = 169
+LAZY_LOAD_CONSTANT = def_op("LAZY_LOAD_CONSTANT", lastop := lastop + 1)
+MAKE_STRING = def_op("MAKE_STRING", lastop := lastop + 1)
+MAKE_INT = def_op("MAKE_INT", lastop := lastop + 1)
+MAKE_LONG = def_op("MAKE_LONG", lastop := lastop + 1)
+MAKE_FLOAT = def_op("MAKE_FLOAT", lastop := lastop + 1)
+MAKE_COMPLEX = def_op("MAKE_COMPLEX", lastop := lastop + 1)
+MAKE_CODE_OBJECT = def_op("MAKE_CODE_OBJECT", lastop := lastop + 1)
+MAKE_BYTES = def_op("MAKE_BYTES", lastop := lastop + 1)
+LOAD_COMMON_CONSTANT = def_op("LOAD_COMMON_CONSTANT", lastop := lastop + 1)  # None, False, True
+RETURN_CONSTANT = def_op("RETURN_CONSTANT", lastop := lastop + 1)
 
 
 def encode_varint(i: int) -> bytes:
@@ -158,10 +158,10 @@ class ComplexConstant:
                         f"Cannot generate code for "
                         f"{type(value).__name__} -- {value!r}")
                 assert False, repr(value)
-        self.emit(RETURN_CONSTANT, self.index, 0)
 
     def get_bytes(self):
         self.generate(self.value)
+        self.emit(RETURN_CONSTANT, self.index, 0)
         data = bytearray()
         for opcode, oparg in self.instructions:
             assert isinstance(oparg, int)
@@ -181,8 +181,8 @@ class ComplexConstant:
 
 
 class CodeObject:
-    def __init__(self, code: types.CodeType, builder: Builder):
-        self.code = code
+    def __init__(self, value: types.CodeType, builder: Builder):
+        self.value = value
         self.builder = builder
 
     def get_bytes(self) -> bytes:
@@ -196,8 +196,6 @@ T = TypeVar("T")
 
 
 class Builder:
-    # TODO: Intern duplicates
-
     def __init__(self):
         self.codeobjs: list[CodeObject] = []
         self.strings: list[String] = []
@@ -205,6 +203,11 @@ class Builder:
         self.constants: list[ComplexConstant] = []
 
     def add(self, where: list[T], thing: T) -> int:
+        # Look for a match
+        for index, it in enumerate(where):
+            if type(it) is type(thing) and it.value == thing.value:
+                return index
+        # Append a new one
         index = len(where)
         where.append(thing)
         return index
