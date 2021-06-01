@@ -89,6 +89,7 @@ BlobConstant = LongInt | Float | Bytes
 
 class String:
     def __init__(self, value: str):
+        assert value is not None
         self.value = value
 
     def get_bytes(self) -> bytes:
@@ -181,15 +182,43 @@ class ComplexConstant:
 
 
 class CodeObject:
-    def __init__(self, value: types.CodeType, builder: Builder):
-        self.value = value
+    def __init__(self, code: types.CodeType, builder: Builder):
+        self.value = code
         self.builder = builder
 
     def get_bytes(self) -> bytes:
-        ...
-
-
-AnyConstant = String | BlobConstant | ComplexConstant | CodeObject
+        code = self.value
+        exceptiontable = getattr(code, "co_exceptiontable", b"")
+        docstring = ""
+        if code.co_consts:
+            docstring = code.co_consts[0] or ""
+        prefix = struct.pack(
+            "<12L",
+            code.co_flags,
+            code.co_argcount,
+            code.co_posonlyargcount,
+            code.co_kwonlyargcount,
+            code.co_nlocals,
+            code.co_stacksize,
+            self.builder.add_string(code.co_name),
+            self.builder.add_bytes(exceptiontable),
+            # TODO: The rest should be metadata offsets
+            self.builder.add_string(code.co_filename),
+            self.builder.add_bytes(b""),  # TODO: location table
+            self.builder.add_string(docstring),
+            # This logically belongs to the co_code array
+            len(code.co_code) // 2,
+        )
+        co_varnames = bytearray()
+        for varname in code.co_varnames:
+            index = self.builder.add_string(varname)
+            co_varnames += struct.pack("<L", index)
+        return (
+            prefix
+            + code.co_code
+            + struct.pack("<L", len(code.co_varnames))
+            + co_varnames
+        )
 
 
 T = TypeVar("T")
@@ -250,6 +279,12 @@ def add_everything(builder: Builder, code: types.CodeType):
 
 
 def report(builder: Builder):
+    print("Code table:")
+    # TODO: Format long byte strings nicer, with ASCII on the side, etc.
+    for i, co in enumerate(builder.codeobjs):
+        b = co.get_bytes()
+        print(f"{i:4d}: {b.hex(' ')}")
+    print("Constant table:")
     for i, constant in enumerate(builder.constants):
         b = constant.get_bytes()
         print(f"Code for constant {i} (prefix {b[:8].hex(' ')})")
@@ -275,8 +310,6 @@ def main():
         with open(filename, "rb") as f:
             code = compile(f.read(), filename, "exec")
             add_everything(builder, code)
-    report(builder)
-
     report(builder)
 
 
