@@ -75,7 +75,9 @@ class String:
         self.value = value
 
     def get_bytes(self) -> bytes:
-        return encode_varint(len(self.value)) + self.value.encode("utf-8")
+        # Ecode number of bytes, not code points or characters
+        b = self.value.encode("utf-8")
+        return encode_varint(len(b)) + b
 
 
 BlobConstant = LongInt | Float
@@ -88,42 +90,50 @@ class ComplexConstant:
         self.value = value
         self.builder = builder
         self.instructions: list[tuple[int, int]] = []
+        self.stacksize = 0
+        self.max_stacksize = 0
         self.index = -1
 
     def set_index(self, index: int) -> None:
         self.index = index
 
-    def emit(self, opcode: int, oparg: int = 0):
+    def emit(self, opcode: int, oparg: int, stackeffect: int):
         self.instructions.append((opcode, oparg))
+        self.stacksize += stackeffect  # Maybe a decrease
+        self.max_stacksize = max(self.max_stacksize, self.stacksize)
 
     def generate(self, value: object):
         match value:
             case int(i) if 0 <= i < 1<<16:
-                self.emit(MAKE_INT, i)
+                self.emit(MAKE_INT, i, 1)
             case int(i) if -256 <= i < 0:
-                self.emit(MAKE_INT, -i)
-                self.emit(UNARY_NEGATIVE)
+                self.emit(MAKE_INT, -i, 1)
+                self.emit(UNARY_NEGATIVE, 0, 0)
             case int(i):
-                self.emit(MAKE_LONG, self.builder.add_long(i))
+                self.emit(MAKE_LONG, self.builder.add_long(i), 1)
             case float(x):
-                self.emit(MAKE_FLOAT, self.builder.add_float(x))
+                self.emit(MAKE_FLOAT, self.builder.add_float(x), 1)
             # TODO: complex, bool, None
             case str(s):
-                self.emit(MAKE_STRING, self.builder.add_string(s))
+                self.emit(MAKE_STRING, self.builder.add_string(s), 1)
             # TODO: bytes
             case tuple(t):
                 # TODO: Avoid needing a really big stack for large tuples
+                old_stacksize = self.stacksize
                 for item in t:
-                    # TODO: But sometimes just self.generate(item)
+                    # TODO: But sometimes just
+                    # self.generate(item)
                     oparg = self.builder.add_constant(item)
-                    self.emit(LAZY_LOAD_CONSTANT, oparg)
-                self.emit(BUILD_TUPLE, len(t))
+                    self.emit(LAZY_LOAD_CONSTANT, oparg, 1)
+                self.emit(BUILD_TUPLE, len(t), 1 - len(t))
+                assert self.stacksize == old_stacksize + 1, \
+                    (self.stacksize, old_stacksize)
             case _:
                 raise TypeError(
                         f"Cannot generate code for "
                         f"{type(value).__name__} -- {value!r}")
                 assert False, repr(value)
-        self.emit(RETURN_CONSTANT, self.index)
+        self.emit(RETURN_CONSTANT, self.index, 0)
 
     def get_bytes(self):
         self.generate(self.value)
@@ -132,7 +142,7 @@ class ComplexConstant:
             assert isinstance(oparg, int)
             if oparg >= 256:
                 # Emit a sequence of EXTENDED_ARG prefix opcodes
-                opargs = []
+                opargs: list[int] = []
                 while oparg:
                     opargs.append(oparg & 0xFF)
                     oparg >>= 8
@@ -141,7 +151,8 @@ class ComplexConstant:
                     data.extend((EXTENDED_ARG, i))
                 oparg = opargs[-1]
             data.extend((opcode, oparg))
-        return bytes(data)
+        prefix = struct.pack("<LL", self.max_stacksize, len(data) // 2)
+        return prefix + bytes(data)
 
 
 AnyConstant = String | BlobConstant | ComplexConstant
@@ -181,14 +192,19 @@ class Builder:
 
 def main():
     builder = Builder()
-    builder.add_constant((0, 1000, -1, "Hi", 3.14))
+    builder.add_constant((0, 1000, -1, "Hello world", "你好", 3.14, 0.5))
     for i, constant in enumerate(builder.constants):
-        print(f"Code for constant {i}")
-        dis.dis(constant.get_bytes())
+        b = constant.get_bytes()
+        print(f"Code for constant {i} (prefix {b[:8].hex(' ')})")
+        dis.dis(b[8:])
+    print("String table:")
     for i, string in enumerate(builder.strings):
-        print(f"String {i} = {string.get_bytes()!r}")
+        b = string.get_bytes()
+        print(f"{i:4d}: {b.hex(' ')} ({b!r})")
+    print("Blob table:")
     for i, blob in enumerate(builder.blobs):
-        print(f"Blob {i} = {blob.get_bytes()!r}")
+        b = blob.get_bytes()
+        print(f"{i:4d}: {b.hex(' ')}")
 
 
 if __name__ == "__main__":
