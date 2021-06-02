@@ -32,31 +32,11 @@ import sys
 import types
 from typing import Iterator, Protocol, TypeVar
 
+from updis import *  # Update dis with extra opcodes
+
 UNARY_NEGATIVE = dis.opmap["UNARY_NEGATIVE"]
 BUILD_TUPLE = dis.opmap["BUILD_TUPLE"]
 EXTENDED_ARG = dis.opmap["EXTENDED_ARG"]
-
-
-def def_op(name: str, op: int) -> int:
-    dis.opname[op] = name
-    dis.opmap[name] = op
-    return op
-
-
-# Extend the set of opcodes
-lastop = 169
-LAZY_LOAD_CONSTANT = def_op("LAZY_LOAD_CONSTANT", lastop := lastop + 1)
-MAKE_STRING = def_op("MAKE_STRING", lastop := lastop + 1)
-MAKE_INT = def_op("MAKE_INT", lastop := lastop + 1)
-MAKE_LONG = def_op("MAKE_LONG", lastop := lastop + 1)
-MAKE_FLOAT = def_op("MAKE_FLOAT", lastop := lastop + 1)
-MAKE_COMPLEX = def_op("MAKE_COMPLEX", lastop := lastop + 1)
-MAKE_CODE_OBJECT = def_op("MAKE_CODE_OBJECT", lastop := lastop + 1)
-MAKE_BYTES = def_op("MAKE_BYTES", lastop := lastop + 1)
-LOAD_COMMON_CONSTANT = def_op(
-    "LOAD_COMMON_CONSTANT", lastop := lastop + 1
-)  # None, False, True
-RETURN_CONSTANT = def_op("RETURN_CONSTANT", lastop := lastop + 1)
 
 
 def encode_varint(i: int) -> bytes:
@@ -132,6 +112,7 @@ class ComplexConstant:
         self.stacksize = 0
         self.max_stacksize = 0
         self.index = -1
+        self.data = None
 
     def set_index(self, index: int) -> None:
         # Needed because RETURN_CONSTANT needs to know its own index
@@ -185,6 +166,8 @@ class ComplexConstant:
                 assert False, repr(value)
 
     def get_bytes(self):
+        if self.data is not None:
+            return self.data
         self.generate(self.value)
         self.emit(RETURN_CONSTANT, self.index, 0)
         data = bytearray()
@@ -202,7 +185,8 @@ class ComplexConstant:
                 oparg = opargs[-1]
             data.extend((opcode, oparg))
         prefix = struct.pack("<LL", self.max_stacksize, len(data) // 2)
-        return prefix + bytes(data)
+        self.data = prefix + bytes(data)
+        return self.data
 
 
 class CodeObject:

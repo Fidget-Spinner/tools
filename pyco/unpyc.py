@@ -4,7 +4,10 @@ This exists mostly as a way to validate that the PYC format proposal
 has enough imformation to roundtrip.
 """
 
+import dis
 import struct
+
+import updis  # Update dis with extra opcodes
 
 
 class Reader:
@@ -69,6 +72,15 @@ def unpyc(data: bytes):
         r = Reader(data, so)
         s = r.read_varstring()
         print(f"String {i} at {so}: {s!r}")
+    # Print the constants, as another example
+    for i, co in enumerate(const_offsets):
+        r = Reader(data, co)
+        max_stacksize = r.read_long()
+        n_instrs = r.read_long()
+        bytecode = r.read_raw_bytes(2*n_instrs)
+        print(f"Constant {i} at {co}, stack={max_stacksize}, {n_instrs} opcodes")
+        print(repr(bytecode))
+        dis.dis(bytecode)
 
 
 def main():
