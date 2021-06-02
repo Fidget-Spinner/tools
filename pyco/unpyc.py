@@ -68,19 +68,35 @@ def unpyc(data: bytes):
     n_blobs = reader.read_long()
     blob_offsets = reader.read_offsets(n_blobs)
     # Print the strings table, as an example
-    for i, so in enumerate(string_offsets):
-        r = Reader(data, so)
+    strings = []
+    for i, offset in enumerate(string_offsets):
+        r = Reader(data, offset)
         s = r.read_varstring()
-        print(f"String {i} at {so}: {s!r}")
+        print(f"String {i} at {offset}: {s!r}")
+        strings.append(s)
     # Print the constants, as another example
-    for i, co in enumerate(const_offsets):
-        r = Reader(data, co)
+    for i, offset in enumerate(const_offsets):
+        r = Reader(data, offset)
         max_stacksize = r.read_long()
         n_instrs = r.read_long()
         bytecode = r.read_raw_bytes(2 * n_instrs)
-        print(f"Constant {i} at {co}, stack={max_stacksize}, {n_instrs} opcodes")
-        print(repr(bytecode))
+        print(f"Constant {i} at {offset}, stack={max_stacksize}, {n_instrs} opcodes")
         dis.dis(bytecode)
+    # We're on a roll! Print the code objects
+    for i, offset in enumerate(code_offsets):
+        r = Reader(data, offset)
+        values = struct.unpack("<12L", r.read_raw_bytes(12*4))
+        print(f"Code object {i} at {offset}")
+        print(values)
+        n_instrs = values[-1]
+        bytecode = r.read_raw_bytes(2 * n_instrs)
+        n_varnames = r.read_long()
+        varname_offsets = r.read_offsets(n_varnames)
+        dis.dis(bytecode)
+        for j, idx in enumerate(varname_offsets):
+            varname = strings[idx]
+            print(f"Var {j} at index {idx}: {varname!r}")
+
 
 
 def main():
