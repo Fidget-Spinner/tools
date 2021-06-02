@@ -22,25 +22,25 @@ class Reader:
         return b
 
     def read_short(self) -> int:
-        part = self.data[self.pos : self.pos+2]
+        part = self.data[self.pos : self.pos + 2]
         self.pos += 2
         return struct.unpack("<H", part)[0]
-    
+
     def read_long(self) -> int:
-        part = self.data[self.pos : self.pos+4]
+        part = self.data[self.pos : self.pos + 4]
         self.pos += 4
         return struct.unpack("<L", part)[0]
-    
+
     def read_offsets(self, n: int) -> list[int]:
         return [self.read_long() for _ in range(n)]
-    
+
     def read_varint(self) -> int:
         result = 0
         while True:
             byte = self.data[self.pos]
             self.pos += 1
-            result = result<<7 | byte&0x7F
-            if not result&0x80:
+            result = result << 7 | byte & 0x7F
+            if not result & 0x80:
                 break
         return result
 
@@ -77,7 +77,7 @@ def unpyc(data: bytes):
         r = Reader(data, co)
         max_stacksize = r.read_long()
         n_instrs = r.read_long()
-        bytecode = r.read_raw_bytes(2*n_instrs)
+        bytecode = r.read_raw_bytes(2 * n_instrs)
         print(f"Constant {i} at {co}, stack={max_stacksize}, {n_instrs} opcodes")
         print(repr(bytecode))
         dis.dis(bytecode)
