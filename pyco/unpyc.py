@@ -15,6 +15,10 @@ class Reader:
         self.data = data
         self.pos = pos
 
+    def seek(self, pos: int):
+        assert pos >= 0
+        self.pos = pos
+
     def read_raw_bytes(self, n: int) -> bytes:
         b = self.data[self.pos : self.pos + n]
         assert len(b) == n
@@ -50,53 +54,68 @@ class Reader:
         return raw.decode("utf-8")
 
 
-def unpyc(data: bytes):
-    reader = Reader(data)
-    assert reader.read_raw_bytes(4) == b".pyc", data[:4]
-    version = reader.read_short()
-    assert version == 0
-    n_code = reader.read_short()
-    meta_start = reader.read_long()
-    assert meta_start == 0
-    total_size = reader.read_long()
-    assert total_size == len(data), (total_size, len(data))
-    code_offsets = reader.read_offsets(n_code)
-    n_constants = reader.read_long()
-    const_offsets = reader.read_offsets(n_constants)
-    n_strings = reader.read_long()
-    string_offsets = reader.read_offsets(n_strings)
-    n_blobs = reader.read_long()
-    blob_offsets = reader.read_offsets(n_blobs)
-    # Print the strings table, as an example
-    strings = []
-    for i, offset in enumerate(string_offsets):
-        r = Reader(data, offset)
-        s = r.read_varstring()
-        print(f"String {i} at {offset}: {s!r}")
-        strings.append(s)
-    # Print the constants, as another example
-    for i, offset in enumerate(const_offsets):
-        r = Reader(data, offset)
-        max_stacksize = r.read_long()
-        n_instrs = r.read_long()
-        bytecode = r.read_raw_bytes(2 * n_instrs)
-        print(f"Constant {i} at {offset}, stack={max_stacksize}, {n_instrs} opcodes")
-        dis.dis(bytecode)
-    # We're on a roll! Print the code objects
-    for i, offset in enumerate(code_offsets):
-        r = Reader(data, offset)
-        values = struct.unpack("<12L", r.read_raw_bytes(12*4))
-        print(f"Code object {i} at {offset}")
-        print(values)
-        n_instrs = values[-1]
-        bytecode = r.read_raw_bytes(2 * n_instrs)
-        n_varnames = r.read_long()
-        varname_offsets = r.read_offsets(n_varnames)
-        dis.dis(bytecode)
-        for j, idx in enumerate(varname_offsets):
-            varname = strings[idx]
-            print(f"Var {j} at index {idx}: {varname!r}")
+class PycFile:
+    def __init__(self, data: bytes):
+        self.data = data
 
+    def load(self):
+        reader = Reader(self.data)
+        assert reader.read_raw_bytes(4) == b".pyc", data[:4]
+        self.version = reader.read_short()
+        assert self.version == 0
+        self.n_code = reader.read_short()
+        meta_start = reader.read_long()
+        assert meta_start == 0
+        self.total_size = reader.read_long()
+        data_size = len(self.data)
+        assert self.total_size == data_size, (self.total_size, data_size)
+        self.code_offsets = reader.read_offsets(self.n_code)
+        self.n_constants = reader.read_long()
+        self.const_offsets = reader.read_offsets(self.n_constants)
+        self.n_strings = reader.read_long()
+        self.string_offsets = reader.read_offsets(self.n_strings)
+        self.n_blobs = reader.read_long()
+        self.blob_offsets = reader.read_offsets(self.n_blobs)
+
+    def report(self):
+        reader = Reader(self.data)
+        # Print the strings table, as an example
+        strings = []
+        for i, offset in enumerate(self.string_offsets):
+            reader.seek(offset)
+            s = reader.read_varstring()
+            print(f"String {i} at {offset}: {s!r}")
+            strings.append(s)
+        # Print the constants, as another example
+        for i, offset in enumerate(self.const_offsets):
+            reader.seek(offset)
+            max_stacksize = reader.read_long()
+            n_instrs = reader.read_long()
+            bytecode = reader.read_raw_bytes(2 * n_instrs)
+            print(
+                f"Constant {i} at {offset}, stack={max_stacksize}, {n_instrs} opcodes"
+            )
+            dis.dis(bytecode)
+        # We're on a roll! Print the code objects
+        for i, offset in enumerate(self.code_offsets):
+            reader.seek(offset)
+            values = struct.unpack("<12L", reader.read_raw_bytes(12 * 4))
+            print(f"Code object {i} at {offset}")
+            print(values)
+            n_instrs = values[-1]
+            bytecode = reader.read_raw_bytes(2 * n_instrs)
+            n_varnames = reader.read_long()
+            varname_offsets = reader.read_offsets(n_varnames)
+            dis.dis(bytecode)
+            for j, idx in enumerate(varname_offsets):
+                varname = strings[idx]
+                print(f"Var {j} at index {idx}: {varname!r}")
+
+
+def unpyc(data: bytes):
+    pyc = PycFile(data)
+    pyc.load()
+    pyc.report()
 
 
 def main():
