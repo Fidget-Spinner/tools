@@ -142,7 +142,7 @@ class ComplexConstant:
         self.stacksize += stackeffect  # Maybe a decrease
         self.max_stacksize = max(self.max_stacksize, self.stacksize)
 
-    def generate(self, value: object):
+    def generate(self, value: None | complex | bytes | str | tuple[object]):
         match value:
             case None:
                 self.emit(LOAD_COMMON_CONSTANT, 0, 1)
@@ -311,7 +311,7 @@ class Builder:
             nonlocal binary_data
             offsets = bytearray()
             for i, thing in enumerate(what):
-                offsets += struct.pack("<L", i)
+                offsets += struct.pack("<L", binary_section_start + len(binary_data))
                 binary_data += thing.get_bytes()
             return offsets
 
@@ -320,8 +320,18 @@ class Builder:
         string_offsets = helper(self.strings)
         blob_offsets = helper(self.blobs)
         binary_section_size = len(binary_data)
+        prefix_size = (
+            16
+            + len(code_offsets)
+            + 4
+            + len(const_offsets)
+            + 4
+            + len(string_offsets)
+            + 4
+            + len(blob_offsets)
+        )
         header = b".pyc" + struct.pack(
-            "<HHLL", 0, len(self.codeobjs), 0, binary_section_size
+            "<HHLL", 0, len(self.codeobjs), 0, prefix_size + binary_section_size
         )
         assert len(header) == 16
         prefix = (
