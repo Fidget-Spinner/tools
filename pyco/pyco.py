@@ -37,6 +37,7 @@ from updis import *  # Update dis with extra opcodes
 UNARY_NEGATIVE = dis.opmap["UNARY_NEGATIVE"]
 BUILD_TUPLE = dis.opmap["BUILD_TUPLE"]
 EXTENDED_ARG = dis.opmap["EXTENDED_ARG"]
+LOAD_CONST = dis.opmap["LOAD_CONST"]
 
 
 def encode_varint(i: int) -> bytes:
@@ -117,6 +118,8 @@ class ComplexConstant:
     def set_index(self, index: int) -> None:
         # Needed because RETURN_CONSTANT needs to know its own index
         self.index = index
+        self.generate(self.value)
+        self.emit(RETURN_CONSTANT, self.index, 0)
 
     def emit(self, opcode: int, oparg: int, stackeffect: int):
         self.instructions.append((opcode, oparg))
@@ -168,8 +171,6 @@ class ComplexConstant:
     def get_bytes(self):
         if self.data is not None:
             return self.data
-        self.generate(self.value)
-        self.emit(RETURN_CONSTANT, self.index, 0)
         data = bytearray()
         for opcode, oparg in self.instructions:
             assert isinstance(oparg, int)
@@ -189,10 +190,47 @@ class ComplexConstant:
         return self.data
 
 
+def rewritten_bytecode(code: types.CodeType, builder: Builder) -> bytes:
+    """Rewrite some instructions.
+    - Replace LOAD_CONST i with LAZY_LOAD_CONSTANT j.
+    - For ops whose argument is a name, replace oparg with 
+      corresponding string index.
+    """
+    instrs = code.co_code
+    new = bytearray()
+    for i in range(0, len(instrs), 2):
+        opcode, oparg = instrs[i:i+2]
+        if opcode == LOAD_CONST:
+            # TODO: Handle EXTENDED_ARG
+            assert i < 2 or instrs[i-2] != EXTENDED_ARG
+            opcode = LAZY_LOAD_CONSTANT
+            oparg = builder.add_constant(code.co_consts[oparg])
+        else:
+            assert opcode not in dis.hasconst
+            if opcode in dis.hasname:
+                # TODO: Handle EXTENDED_ARG
+                assert i < 2 or instrs[i-2] != EXTENDED_ARG
+                oparg = builder.add_string(code.co_names[oparg])
+        new.extend((opcode, oparg))
+    return bytes(new)
+
+
 class CodeObject:
     def __init__(self, code: types.CodeType, builder: Builder):
         self.value = code
         self.builder = builder
+
+    def preload(self):
+        code = self.value
+        self.builder.add_bytes(b"")
+        exceptiontable = getattr(code, "co_exceptiontable", b"")
+        self.builder.add_string(code.co_name)
+        self.builder.add_string(code.co_filename)
+        self.builder.add_bytes(exceptiontable)
+        for name in code.co_names + code.co_varnames:
+            self.builder.add_string(name)
+        for value in code.co_consts:
+            self.builder.add_constant(value)
 
     def get_bytes(self) -> bytes:
         code = self.value
@@ -223,7 +261,7 @@ class CodeObject:
             co_varnames += struct.pack("<L", index)
         return (
             prefix
-            + code.co_code
+            + rewritten_bytecode(code, self.builder)
             + struct.pack("<L", len(code.co_varnames))
             + co_varnames
         )
@@ -246,6 +284,10 @@ class Builder:
         self.strings: list[String] = []
         self.blobs: list[BlobConstant] = []
         self.constants: list[ComplexConstant] = []
+        self.locked = False
+
+    def lock(self):
+        self.locked = True
 
     def add(self, where: list[T], thing: T) -> int:
         # Look for a match
@@ -254,6 +296,7 @@ class Builder:
                 return index
         # Append a new one
         index = len(where)
+        assert not self.locked
         where.append(thing)
         return index
 
@@ -276,7 +319,10 @@ class Builder:
         return index
 
     def add_code(self, code: types.CodeType) -> int:
-        return self.add(self.codeobjs, CodeObject(code, self))
+        co = CodeObject(code, self)
+        index = self.add(self.codeobjs, co)
+        co.preload()
+        return index
 
     def get_bytes(self) -> bytes:
         code_section_size = 4 * len(self.codeobjs)
@@ -342,9 +388,6 @@ def all_code_objects(code: types.CodeType) -> Iterator[types.CodeType]:
 def add_everything(builder: Builder, code: types.CodeType):
     for c in all_code_objects(code):
         builder.add_code(c)
-        for x in c.co_consts:
-            if not isinstance(x, types.CodeType):
-                builder.add_constant(x)
 
 
 def report(builder: Builder):
@@ -379,6 +422,7 @@ def main():
         with open(filename, "rb") as f:
             code = compile(f.read(), filename, "exec")
             add_everything(builder, code)
+    builder.lock()
     report(builder)
     pyc_data = builder.get_bytes()
     with open("example.pyc", "wb") as f:
