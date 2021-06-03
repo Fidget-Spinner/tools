@@ -6,6 +6,7 @@ has enough imformation to roundtrip.
 
 import dis
 import struct
+import types
 
 import updis  # Update dis with extra opcodes
 
@@ -54,9 +55,18 @@ class Reader:
         return raw.decode("utf-8")
 
 
+def dummy_func():
+    pass
+
+
+dummy_code = dummy_func.__code__
+
 class PycFile:
     def __init__(self, data: bytes):
         self.data = data
+        self.code_objects: list[types.CodeType] = []
+        self.constants: list[object] = []
+        self.strings: list[str] = []
 
     def load(self):
         reader = Reader(self.data)
@@ -66,9 +76,9 @@ class PycFile:
         self.n_code = reader.read_short()
         meta_start = reader.read_long()
         assert meta_start == 0
-        self.total_size = reader.read_long()
+        total_size = reader.read_long()
         data_size = len(self.data)
-        assert self.total_size == data_size, (self.total_size, data_size)
+        assert total_size == data_size, (total_size, data_size)
         self.code_offsets = reader.read_offsets(self.n_code)
         self.n_constants = reader.read_long()
         self.const_offsets = reader.read_offsets(self.n_constants)
@@ -76,6 +86,17 @@ class PycFile:
         self.string_offsets = reader.read_offsets(self.n_strings)
         self.n_blobs = reader.read_long()
         self.blob_offsets = reader.read_offsets(self.n_blobs)
+
+        self.code_objects = [None] * self.n_code
+        self.constants = [None] * self.n_constants
+        self.strings = [None] * self.n_strings
+
+    def get_code(self, i: int):
+        assert 0 <= i < len(self.code_objects)
+        result = self.code_objects[i]
+        if result is not None:
+            return result
+        # Make a new code object (TODO)
 
     def report(self):
         reader = Reader(self.data)
