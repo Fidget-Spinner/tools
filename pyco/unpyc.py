@@ -26,6 +26,11 @@ class Reader:
         self.pos += n
         return b
 
+    def read_bytes(self) -> bytes:
+        n = self.read_varint()
+        b = self.read_raw_bytes(n)
+        return n
+
     def read_short(self) -> int:
         part = self.data[self.pos : self.pos + 2]
         self.pos += 2
@@ -34,7 +39,9 @@ class Reader:
     def read_long(self) -> int:
         part = self.data[self.pos : self.pos + 4]
         self.pos += 4
-        return struct.unpack("<L", part)[0]
+        l = struct.unpack("<L", part)[0]
+        ## print("read_long ->", l)
+        return l
 
     def read_offsets(self, n: int) -> list[int]:
         return [self.read_long() for _ in range(n)]
@@ -60,6 +67,7 @@ def dummy_func():
 
 
 dummy_code = dummy_func.__code__
+
 
 class PycFile:
     def __init__(self, data: bytes):
@@ -90,13 +98,68 @@ class PycFile:
         self.code_objects = [None] * self.n_code
         self.constants = [None] * self.n_constants
         self.strings = [None] * self.n_strings
+        self.blobs = [None] * self.n_blobs
 
-    def get_code(self, i: int):
+    def get_bytes(self, i: int) -> bytes:
+        assert 0 <= i < len(self.blobs)
+        b = self.blobs[i]
+        if b is not None:
+            return b
+        reader = Reader(self.data, self.blob_offsets[i])
+        b = reader.read_bytes()
+        self.blobs[i] = b
+        return b
+
+    def read_string(self, offset: int) -> str:
+        reader = Reader(self.data, offset)
+        return reader.read_varstring()
+
+    def get_string(self, i: int) -> str:
+        assert 0 <= i < len(self.strings)
+        s = self.strings[i]
+        if s is not None:
+            return s
+        s = self.read_string(self.string_offsets[i])
+        self.strings[i] = s
+        return s
+
+    def get_code(self, i: int) -> types.CodeType:
         assert 0 <= i < len(self.code_objects)
-        result = self.code_objects[i]
-        if result is not None:
-            return result
-        # Make a new code object (TODO)
+        code = self.code_objects[i]
+        if code is not None:
+            return code
+        reader = Reader(self.data, self.code_offsets[i])
+        code = dummy_code
+        kwargs = dict(
+            co_flags=reader.read_long(),
+            co_argcount=reader.read_long(),
+            co_posonlyargcount=reader.read_long(),
+            co_kwonlyargcount=reader.read_long(),
+            co_nlocals=reader.read_long(),
+            co_stacksize=reader.read_long(),
+            co_name=self.get_string(reader.read_long()),
+            co_exceptiontable=self.get_bytes(reader.read_long()),
+            co_filename=self.get_string(reader.read_long()),
+            co_locationtable=self.get_bytes(reader.read_long()),
+            co_docstring=self.get_string(reader.read_long()),
+        )
+        docstring = kwargs.pop("co_docstring")
+        if not hasattr(code, "co_exceptiontable"):
+            del kwargs["co_exceptiontable"]
+        if not hasattr(code, "co_locationtable"):
+            del kwargs["co_locationtable"]
+        print(kwargs)
+        ninstrs = reader.read_long()
+        kwargs.update(co_code=reader.read_raw_bytes(2 * ninstrs))
+        nvarnames = reader.read_long()
+        offsets = [reader.read_long() for _ in range(nvarnames)]
+        kwargs.update(
+            co_varnames=tuple(self.get_string(i) for i in offsets)
+        )
+        kwargs.update(co_names=tuple(s if isinstance(s, str) else "" for s in self.strings))
+        code = code.replace(**kwargs)
+        self.code_objects[i] = code
+        return code
 
     def report(self):
         reader = Reader(self.data)
@@ -136,7 +199,11 @@ class PycFile:
 def unpyc(data: bytes):
     pyc = PycFile(data)
     pyc.load()
-    pyc.report()
+    ## pyc.report()
+    code = pyc.get_code(0)
+    for i, s in enumerate(code.co_names):
+        print(i, repr(s))
+    dis.dis(code)
 
 
 def main():
