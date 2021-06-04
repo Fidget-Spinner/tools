@@ -17,10 +17,11 @@ class Reader:
         self.pos = pos
 
     def seek(self, pos: int):
-        assert pos >= 0
+        assert 0 <= pos < len(self.data)
         self.pos = pos
 
     def read_raw_bytes(self, n: int) -> bytes:
+        assert self.pos + n <= len(self.data)
         b = self.data[self.pos : self.pos + n]
         assert len(b) == n
         self.pos += n
@@ -32,15 +33,12 @@ class Reader:
         return n
 
     def read_short(self) -> int:
-        part = self.data[self.pos : self.pos + 2]
-        self.pos += 2
+        part = self.read_raw_bytes(2)
         return struct.unpack("<H", part)[0]
 
     def read_long(self) -> int:
-        part = self.data[self.pos : self.pos + 4]
-        self.pos += 4
+        part = self.read_raw_bytes(4)
         l = struct.unpack("<L", part)[0]
-        ## print("read_long ->", l)
         return l
 
     def read_offsets(self, n: int) -> list[int]:
@@ -48,11 +46,13 @@ class Reader:
 
     def read_varint(self) -> int:
         result = 0
+        shift = 0
         while True:
             byte = self.data[self.pos]
             self.pos += 1
-            result = result << 7 | byte & 0x7F
-            if not result & 0x80:
+            result |= (byte & 0x7F) << shift
+            shift += 7
+            if not byte & 0x80:
                 break
         return result
 
@@ -141,9 +141,11 @@ class PycFile:
             co_exceptiontable=self.get_bytes(reader.read_long()),
             co_filename=self.get_string(reader.read_long()),
             co_locationtable=self.get_bytes(reader.read_long()),
-            co_docstring=self.get_string(reader.read_long()),
         )
-        docstring = kwargs.pop("co_docstring")
+        docindex = reader.read_long()
+        if docindex:
+            docstring = self.get_string(docindex)
+            print(f"{kwargs['co_name']}: doc={docstring!r}")
         if not hasattr(code, "co_exceptiontable"):
             del kwargs["co_exceptiontable"]
         if not hasattr(code, "co_locationtable"):
@@ -156,7 +158,7 @@ class PycFile:
         kwargs.update(
             co_varnames=tuple(self.get_string(i) for i in offsets)
         )
-        kwargs.update(co_names=tuple(s if isinstance(s, str) else "" for s in self.strings))
+        kwargs.update(co_names=tuple(s if isinstance(s, str) else str(type(s)) for s in self.strings))
         code = code.replace(**kwargs)
         self.code_objects[i] = code
         return code
@@ -200,10 +202,10 @@ def unpyc(data: bytes):
     pyc = PycFile(data)
     pyc.load()
     ## pyc.report()
-    code = pyc.get_code(0)
-    for i, s in enumerate(code.co_names):
-        print(i, repr(s))
-    dis.dis(code)
+    for i in range(len(pyc.code_offsets)):
+        print("Code object", i)
+        code = pyc.get_code(i)
+        dis.dis(code)
 
 
 def main():
