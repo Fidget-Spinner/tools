@@ -158,6 +158,16 @@ class PycFile:
         kwargs.update(
             co_varnames=tuple(self.get_string(i) for i in offsets)
         )
+        nfreevars = reader.read_long()
+        offsets = [reader.read_long() for _ in range(nfreevars)]
+        kwargs.update(
+            co_freevars=tuple(self.get_string(i) for i in offsets)
+        )
+        ncellvars = reader.read_long()
+        offsets = [reader.read_long() for _ in range(ncellvars)]
+        kwargs.update(
+            co_cellvars=tuple(self.get_string(i) for i in offsets)
+        )
         kwargs.update(co_names=tuple(s if isinstance(s, str) else str(type(s)) for s in self.strings))
         code = code.replace(**kwargs)
         self.code_objects[i] = code

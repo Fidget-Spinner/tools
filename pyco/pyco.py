@@ -212,7 +212,7 @@ def rewritten_bytecode(code: types.CodeType, builder: Builder) -> bytes:
                 assert i < 2 or instrs[i-2] != EXTENDED_ARG
                 oparg = builder.add_string(code.co_names[oparg])
         new.extend((opcode, oparg))
-    return bytes(new)
+    return new
 
 
 class CodeObject:
@@ -227,7 +227,7 @@ class CodeObject:
         self.builder.add_string(code.co_name)
         self.builder.add_string(code.co_filename)
         self.builder.add_bytes(exceptiontable)
-        for name in code.co_names + code.co_varnames:
+        for name in code.co_names + code.co_varnames + code.co_freevars + code.co_cellvars:
             self.builder.add_string(name)
         for value in code.co_consts:
             self.builder.add_constant(value)
@@ -235,6 +235,7 @@ class CodeObject:
     def get_bytes(self) -> bytes:
         code = self.value
         exceptiontable = getattr(code, "co_exceptiontable", b"")
+
         docindex = 0
         # 3 == CO_NEWLOCALS | CO_OPTIMIZED; this signifies a function
         # (Functions store their docstring as constant zero;
@@ -243,8 +244,9 @@ class CodeObject:
             docstring = code.co_consts[0]
             if docstring is not None:
                 docindex = self.builder.add_string(docstring)
+
         prefix = struct.pack(
-            "<12L",
+            "<11L",
             code.co_flags,
             code.co_argcount,
             code.co_posonlyargcount,
@@ -257,19 +259,35 @@ class CodeObject:
             self.builder.add_string(code.co_filename),
             self.builder.add_bytes(b""),  # TODO: location table
             docindex,
-            # This logically belongs to the co_code array
-            len(code.co_code) // 2,
         )
-        co_varnames = bytearray()
+
+        result = bytearray()
+        result += prefix
+
+        codearray = bytearray()
+        codearray += struct.pack("<L", len(code.co_code) // 2)
+        codearray += rewritten_bytecode(code, self.builder)
+        result += codearray
+
+        varnames = bytearray()
+        varnames += struct.pack("<L", len(code.co_varnames))
         for varname in code.co_varnames:
-            index = self.builder.add_string(varname)
-            co_varnames += struct.pack("<L", index)
-        return (
-            prefix
-            + rewritten_bytecode(code, self.builder)
-            + struct.pack("<L", len(code.co_varnames))
-            + co_varnames
-        )
+            varnames += struct.pack("<L", self.builder.add_string(varname))
+        result += varnames
+
+        freevars = bytearray()
+        freevars += struct.pack("<L", len(code.co_freevars))
+        for freevar in code.co_freevars:
+            freevars += struct.pack("<L", self.builder.add_string(freevar))
+        result += freevars
+
+        cellvars = bytearray()
+        cellvars += struct.pack("<L", len(code.co_cellvars))
+        for cellvar in code.co_cellvars:
+            cellvars += struct.pack("<L", self.builder.add_string(cellvar))
+        result += cellvars
+
+        return bytes(result)
 
 
 class BytesProducer(Protocol):
