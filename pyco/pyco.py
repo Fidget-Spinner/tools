@@ -26,6 +26,7 @@ We can then assess the performance and see where to go from there.
 
 from __future__ import annotations  # I have forward references
 
+import builtins
 import dis  # Where opname/opmap live, according to the docs
 import struct
 import sys
@@ -133,6 +134,8 @@ class ComplexConstant:
                 self.emit(LOAD_COMMON_CONSTANT, 0, 1)
             case False | True as x:
                 self.emit(LOAD_COMMON_CONSTANT, int(x) + 1, 1)
+            case builtins.Ellipsis:
+                self.emit(LOAD_COMMON_CONSTANT, 3, 1)
             case int(i) if 0 <= i < 1<<16:
                 self.emit(MAKE_INT, i, 1)
             case int(i) if -256 <= i < 0:
@@ -205,15 +208,21 @@ def rewritten_bytecode(code: types.CodeType, builder: Builder) -> bytes:
         opcode, oparg = instrs[i:i+2]
         if opcode == LOAD_CONST:
             # TODO: Handle EXTENDED_ARG
-            assert i < 2 or instrs[i-2] != EXTENDED_ARG
+            if i >= 2 and instrs[i-2] != EXTENDED_ARG:
+                raise RuntimeError(f"More than 256 constants in original {code.co_name} at line {code.co_firstlineno}")
             opcode = LAZY_LOAD_CONSTANT
             oparg = builder.add_constant(code.co_consts[oparg])
+            if oparg >= 256:
+                raise RuntimeError(f"More than 256 constants in {code.co_name} at line {code.co_firstlineno}")
         else:
             assert opcode not in dis.hasconst
             if opcode in dis.hasname:
                 # TODO: Handle EXTENDED_ARG
-                assert i < 2 or instrs[i-2] != EXTENDED_ARG
+                if i >= 2 and instrs[i-2] != EXTENDED_ARG:
+                    raise RuntimeError(f"More than 256 names in original {code.co_name} at line {code.co_firstlineno}")
                 oparg = builder.add_string(code.co_names[oparg])
+                if oparg >= 256:
+                    raise RuntimeError(f"More than 256 names in {code.co_name} at line {code.co_firstlineno}")
         new.extend((opcode, oparg))
     return new
 
