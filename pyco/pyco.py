@@ -235,9 +235,14 @@ class CodeObject:
     def get_bytes(self) -> bytes:
         code = self.value
         exceptiontable = getattr(code, "co_exceptiontable", b"")
-        docstring = ""
-        if code.co_consts:
-            docstring = code.co_consts[0] or ""
+        docindex = 0
+        # 3 == CO_NEWLOCALS | CO_OPTIMIZED; this signifies a function
+        # (Functions store their docstring as constant zero;
+        # other code objects have explicit code to assign to __doc__.)
+        if (code.co_flags & 3 == 3) and code.co_consts:
+            docstring = code.co_consts[0]
+            if docstring is not None:
+                docindex = self.builder.add_string(docstring)
         prefix = struct.pack(
             "<12L",
             code.co_flags,
@@ -251,7 +256,7 @@ class CodeObject:
             # TODO: The rest should be metadata offsets
             self.builder.add_string(code.co_filename),
             self.builder.add_bytes(b""),  # TODO: location table
-            self.builder.add_string(docstring),
+            docindex,
             # This logically belongs to the co_code array
             len(code.co_code) // 2,
         )
