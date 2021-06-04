@@ -16,6 +16,7 @@ MAKE_INT = def_op("MAKE_INT", lastop := lastop + 1)
 MAKE_LONG = def_op("MAKE_LONG", lastop := lastop + 1)
 MAKE_FLOAT = def_op("MAKE_FLOAT", lastop := lastop + 1)
 MAKE_COMPLEX = def_op("MAKE_COMPLEX", lastop := lastop + 1)
+MAKE_FROZEN_SET = def_op("MAKE_FROZEN_SET", lastop := lastop + 1)
 MAKE_CODE_OBJECT = def_op("MAKE_CODE_OBJECT", lastop := lastop + 1)
 MAKE_BYTES = def_op("MAKE_BYTES", lastop := lastop + 1)
 LOAD_COMMON_CONSTANT = def_op(

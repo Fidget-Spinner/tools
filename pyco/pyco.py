@@ -36,6 +36,7 @@ from updis import *  # Update dis with extra opcodes
 
 UNARY_NEGATIVE = dis.opmap["UNARY_NEGATIVE"]
 BUILD_TUPLE = dis.opmap["BUILD_TUPLE"]
+BUILD_SET = dis.opmap["BUILD_SET"]
 EXTENDED_ARG = dis.opmap["EXTENDED_ARG"]
 LOAD_CONST = dis.opmap["LOAD_CONST"]
 
@@ -149,7 +150,8 @@ class ComplexConstant:
                 self.emit(MAKE_BYTES, self.builder.add_bytes(b),1)
             case str(s):
                 self.emit(MAKE_STRING, self.builder.add_string(s), 1)
-            case tuple(t):
+            case tuple(t) | frozenset(t):
+                # NOTE: frozenset() is used for 'x in <constant tuple>'
                 # TODO: Avoid needing a really big stack for large tuples
                 old_stacksize = self.stacksize
                 for item in t:
@@ -157,7 +159,8 @@ class ComplexConstant:
                     # self.generate(item)
                     oparg = self.builder.add_constant(item)
                     self.emit(LAZY_LOAD_CONSTANT, oparg, 1)
-                self.emit(BUILD_TUPLE, len(t), 1 - len(t))
+                opcode = BUILD_TUPLE if isinstance(t, tuple) else BUILD_SET
+                self.emit(opcode, len(t), 1 - len(t))
                 assert self.stacksize == old_stacksize + 1, \
                     (self.stacksize, old_stacksize)
             case types.CodeType() as code:
@@ -444,7 +447,7 @@ def main():
         filename = sys.argv[1]
         with open(filename, "rb") as f:
             code = compile(f.read(), filename, "exec")
-            add_everything(builder, code)
+        add_everything(builder, code)
     builder.lock()
     report(builder)
     pyc_data = builder.get_bytes()
