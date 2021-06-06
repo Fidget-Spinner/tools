@@ -31,9 +31,13 @@ import dis  # Where opname/opmap live, according to the docs
 import struct
 import sys
 import types
+
+from inspect import CO_OPTIMIZED, CO_NEWLOCALS
 from typing import Iterator, Protocol, TypeVar
 
 from updis import *  # Update dis with extra opcodes
+
+FUNCTION_FLAGS = CO_OPTIMIZED | CO_NEWLOCALS
 
 UNARY_NEGATIVE = dis.opmap["UNARY_NEGATIVE"]
 BUILD_TUPLE = dis.opmap["BUILD_TUPLE"]
@@ -158,10 +162,11 @@ class ComplexConstant:
                 # TODO: Avoid needing a really big stack for large tuples
                 old_stacksize = self.stacksize
                 for item in t:
-                    # TODO: But sometimes just
-                    # self.generate(item)
-                    oparg = self.builder.add_constant(item)
-                    self.emit(LAZY_LOAD_CONSTANT, oparg, 1)
+                    if self.builder.is_constant(item):
+                        oparg = self.builder.add_constant(item)
+                        self.emit(LAZY_LOAD_CONSTANT, oparg, 1)
+                    else:
+                        self.generate(item)
                 opcode = BUILD_TUPLE if isinstance(t, tuple) else BUILD_SET
                 self.emit(opcode, len(t), 1 - len(t))
                 assert self.stacksize == old_stacksize + 1, \
@@ -208,17 +213,41 @@ def rewritten_bytecode(code: types.CodeType, builder: Builder) -> bytes:
         opcode, oparg = instrs[i:i+2]
         if opcode == LOAD_CONST:
             # TODO: Handle EXTENDED_ARG
-            if i >= 2 and instrs[i-2] != EXTENDED_ARG:
+            if i >= 2 and instrs[i-2] == EXTENDED_ARG:
                 raise RuntimeError(f"More than 256 constants in original {code.co_name} at line {code.co_firstlineno}")
-            opcode = LAZY_LOAD_CONSTANT
-            oparg = builder.add_constant(code.co_consts[oparg])
-            if oparg >= 256:
-                raise RuntimeError(f"More than 256 constants in {code.co_name} at line {code.co_firstlineno}")
+            value = code.co_consts[oparg]
+            if is_immediate(value):
+                if isinstance(value, int):
+                    opcode = MAKE_INT
+                    oparg = value
+                else:
+                    opcode = LOAD_COMMON_CONSTANT
+                    match value:
+                        case None:
+                            oparg = 0
+                        case bool(b):
+                            oparg = 1 + b
+                        case builtins.Ellipsis:
+                            oparg = 3
+                        case tuple(()):
+                            opcode = BUILD_TUPLE
+                            oparg = 0
+                        case frozenset(()):
+                            opcode = BUILD_SET
+                            oparg = 0
+                        case _:
+                            # This code and is_immediate() are out of sync
+                            assert False, f"{value} is not an immediately loadable constant"
+            else:
+                opcode = LAZY_LOAD_CONSTANT
+                oparg = builder.add_constant(code.co_consts[oparg])
+                if oparg >= 256:
+                    raise RuntimeError(f"More than 256 constants in {code.co_name} at line {code.co_firstlineno}")
         else:
             assert opcode not in dis.hasconst
             if opcode in dis.hasname:
                 # TODO: Handle EXTENDED_ARG
-                if i >= 2 and instrs[i-2] != EXTENDED_ARG:
+                if i >= 2 and instrs[i-2] == EXTENDED_ARG:
                     raise RuntimeError(f"More than 256 names in original {code.co_name} at line {code.co_firstlineno}")
                 oparg = builder.add_string(code.co_names[oparg])
                 if oparg >= 256:
@@ -227,32 +256,80 @@ def rewritten_bytecode(code: types.CodeType, builder: Builder) -> bytes:
     return new
 
 
+def is_immediate(value: object) -> bool:
+    match value:
+        case None | bool() | builtins.Ellipsis | tuple(()):
+            return True
+        case int(i) if 0 <= i < 256:
+            return True
+        case tuple(()):
+            return True
+        case frozenset(s) if not s:
+            return True
+        case _:
+            return False
+
+
+COMPREHENSION_NAMES = {"<genexpr>", "<listcomp>", "<setcomp>", "<dictcomp>"}
+
+
+def is_function_code(code: types.CodeType) -> bool:
+    # Functions store their docstring as constant zero;
+    # other code objects have explicit code to assign to __doc__.
+    return (
+        code.co_flags & FUNCTION_FLAGS == FUNCTION_FLAGS
+        # NOTE: There's no direct way to tell a comprehension code object
+        and code.co_name not in COMPREHENSION_NAMES
+    )
+
+
 class CodeObject:
     def __init__(self, code: types.CodeType, builder: Builder):
         self.value = code
         self.builder = builder
 
     def preload(self):
+        """Compute indexes that need to be patched into existing code.
+
+        - Compute constant indexes for toplevel non-immediate non-code constants
+        - Compute string indexes for co_varnames, co_freevars, co_cellvars
+        """
         code = self.value
-        self.builder.add_bytes(b"")
-        exceptiontable = getattr(code, "co_exceptiontable", b"")
-        self.builder.add_string(code.co_name)
-        self.builder.add_string(code.co_filename)
-        self.builder.add_bytes(exceptiontable)
-        for name in code.co_names + code.co_varnames + code.co_freevars + code.co_cellvars:
+        if is_function_code(code):
+            consts = code.co_consts[1:]
+        else:
+            consts = code.co_consts
+        for value in consts:
+            if not is_immediate(value):
+                self.builder.add_constant(value)
+        for name in code.co_names:
             self.builder.add_string(name)
-        for value in code.co_consts:
-            self.builder.add_constant(value)
+
+    def finish(self):
+        """Compute indexes for additional values.
+
+        These do not need to be patched into existing code so the index values
+
+        """
+        code = self.value
+        self.builder.add_string(code.co_name)
+        exceptiontable = getattr(code, "co_exceptiontable", None)
+        if exceptiontable is not None:
+            self.builder.add_bytes(exceptiontable)
+        self.builder.add_string(code.co_filename)
+        if is_function_code(code) and code.co_consts:
+            docstring = code.co_consts[0]
+            if docstring is not None:
+                self.builder.add_string(docstring)
+        for name in code.co_varnames + code.co_freevars + code.co_cellvars:
+            self.builder.add_string(name)
 
     def get_bytes(self) -> bytes:
         code = self.value
-        exceptiontable = getattr(code, "co_exceptiontable", b"")
-
+        exceptiontable = getattr(code, "co_exceptiontable", None)
+        etindex = 0 if exceptiontable is None else self.builder.add_bytes(exceptiontable)
         docindex = 0
-        # 3 == CO_NEWLOCALS | CO_OPTIMIZED; this signifies a function
-        # (Functions store their docstring as constant zero;
-        # other code objects have explicit code to assign to __doc__.)
-        if (code.co_flags & 3 == 3) and code.co_consts:
+        if is_function_code(code) and code.co_consts:
             docstring = code.co_consts[0]
             if docstring is not None:
                 docindex = self.builder.add_string(docstring)
@@ -266,10 +343,10 @@ class CodeObject:
             code.co_nlocals,
             code.co_stacksize,
             self.builder.add_string(code.co_name),
-            self.builder.add_bytes(exceptiontable),
+            etindex,
             # TODO: The rest should be metadata offsets
             self.builder.add_string(code.co_filename),
-            self.builder.add_bytes(b""),  # TODO: location table
+            0,  # TODO: location table
             docindex,
         )
 
@@ -325,9 +402,10 @@ class Builder:
         self.locked = True
 
     def add(self, where: list[T], thing: T) -> int:
+        # TODO: Avoid O(N**2) lookup behavior
         # Look for a match
         for index, it in enumerate(where):
-            if type(it) is type(thing) and it.value == thing.value:
+            if type(it.value) is type(thing.value) and it.value == thing.value:
                 return index
         # Append a new one
         index = len(where)
@@ -347,6 +425,13 @@ class Builder:
     def add_float(self, value: float) -> int:
         return self.add(self.blobs, Float(value))
 
+    def is_constant(self, value: object) -> bool:
+        # TODO: Avoid O(N**2) lookup behavior
+        for index, it in enumerate(self.constants):
+            if type(it.value) is type(value) and it.value == value:
+                return True
+        return False
+
     def add_constant(self, value: object) -> int:
         cc = ComplexConstant(value, self)
         index = self.add(self.constants, cc)
@@ -355,9 +440,15 @@ class Builder:
 
     def add_code(self, code: types.CodeType) -> int:
         co = CodeObject(code, self)
-        index = self.add(self.codeobjs, co)
-        co.preload()
-        return index
+        return self.add(self.codeobjs, co)
+
+    def preload_code_objects(self):
+        for co in self.codeobjs:
+            co.preload()
+
+    def finish_code_objects(self):
+        for co in self.codeobjs:
+            co.finish()
 
     def get_bytes(self) -> bytes:
         code_section_size = 4 * len(self.codeobjs)
@@ -417,12 +508,14 @@ def all_code_objects(code: types.CodeType) -> Iterator[types.CodeType]:
     yield code
     for x in code.co_consts:
         if isinstance(x, types.CodeType):
-            yield x
+            yield from all_code_objects(x)
 
 
 def add_everything(builder: Builder, code: types.CodeType):
     for c in all_code_objects(code):
         builder.add_code(c)
+    builder.preload_code_objects()
+    builder.finish_code_objects()
 
 
 def report(builder: Builder):
