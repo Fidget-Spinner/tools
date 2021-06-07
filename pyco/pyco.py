@@ -76,7 +76,7 @@ class LongInt:
         self.value = value
 
     def get_bytes(self) -> bytes:
-        return encode_varint(self.value)
+        return encode_signed_varint(self.value)
 
 
 class Float:
@@ -104,8 +104,9 @@ class String:
         self.value = value
 
     def get_bytes(self) -> bytes:
-        # Ecode number of bytes, not code points or characters
-        b = self.value.encode("utf-8")
+        # TODO: Encode lone surrogates and other errors in pseudo-utf8
+        b = self.value.encode("utf-8", errors="replace")
+        # Encode number of bytes, not code points or characters
         return encode_varint(len(b)) + b
 
 
