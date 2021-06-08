@@ -4,6 +4,64 @@ New PYC Format
 Blah, blah.  (TODO: Copy from Mark's proto-PEP.)
 
 
+Provisional Format Specification
+================================
+
+This is embedded in the existing PYC format, which is marshal-based.
+
+PYC header
+----------
+
+16 bytes.
+
+- First 16 bytes, unchanged (non-marshal PYC header; **INCLUDED IN OFFSETS**)
+
+Marshal header
+--------------
+
+16 bytes.
+
+- First marshal byte must be 'P' (new marshal opcode)
+- Next three bytes: 'YC.' (filler)
+- version: u2 = 0
+- n_code_objs: u2
+- _: u4 = 0 (reserved for meta_offset)
+- total_size: u4 (== length of file)
+
+Offset arrays
+-------------
+
+Variable size.
+
+Question: Why put n_code_objs in the header?
+
+- code_offsets: u4 * n_code_objs
+
+- n_consts: u4
+- const_offsets: u4 * n_consts
+
+- n_string_offsets: u4
+- string_offsets: u4 * n_string_offsets
+
+- n_blob_offsets: u4
+- blob_offsets: u4 * n_blob_offsets
+
+Binary data
+-----------
+
+Variable size, unstructured; offsets point into this area.
+
+Metadata
+--------
+
+Zero bytes (currently not used).
+
+End of data
+-----------
+
+Total_size points here.
+
+
 Things To Do
 ============
 
