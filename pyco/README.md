@@ -9,6 +9,21 @@ Provisional Format Specification
 
 This is embedded in the existing PYC format, which is marshal-based.
 
+Numbers (u2 and u4) are little-endian, and aligned on their size.
+
+Variable-length unsigned integers are encoded using
+[LEB128](https://en.wikipedia.org/wiki/LEB128).
+However, variable-length signed integers are not encoded
+using the algorithm described there; instead, they are
+encoded as `sign_bit(i) | (abs(i) << 1)`.
+
+Strings are encoded using UTF-8 with `errors='surrogatepass'`,
+preceded by the number of bytes in LEB128 encoding.
+
+Bytes are similarly preceded with their length in LEB128.
+
+TODO: Describe how code objects and their constants are encoded.
+
 PYC header
 ----------
 

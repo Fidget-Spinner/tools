@@ -45,7 +45,6 @@ BUILD_SET = dis.opmap["BUILD_SET"]
 EXTENDED_ARG = dis.opmap["EXTENDED_ARG"]
 LOAD_CONST = dis.opmap["LOAD_CONST"]
 
-
 def encode_varint(i: int) -> bytes:
     """LEB128 encoding (https://en.wikipedia.org/wiki/LEB128)"""
     if i == 0:
@@ -104,8 +103,7 @@ class String:
         self.value = value
 
     def get_bytes(self) -> bytes:
-        # TODO: Encode lone surrogates and other errors in pseudo-utf8
-        b = self.value.encode("utf-8", errors="replace")
+        b = self.value.encode("utf-8", errors="surrogatepass")
         # Encode number of bytes, not code points or characters
         return encode_varint(len(b)) + b
 
