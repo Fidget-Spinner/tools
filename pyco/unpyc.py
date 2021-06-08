@@ -78,15 +78,17 @@ class PycFile:
 
     def load(self):
         reader = Reader(self.data)
-        assert reader.read_raw_bytes(4) == b".pyc", data[:4]
+        assert reader.read_raw_bytes(4) == b"PYC.", self.data[:4]
         self.version = reader.read_short()
         assert self.version == 0
-        self.n_code = reader.read_short()
+        self.flags = reader.read_short()
+        assert self.flags == 0
         meta_start = reader.read_long()
         assert meta_start == 0
         total_size = reader.read_long()
         data_size = len(self.data)
         assert total_size == data_size, (total_size, data_size)
+        self.n_code = reader.read_long()
         self.code_offsets = reader.read_offsets(self.n_code)
         self.n_constants = reader.read_long()
         self.const_offsets = reader.read_offsets(self.n_constants)

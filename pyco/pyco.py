@@ -333,6 +333,8 @@ class CodeObject:
             if docstring is not None:
                 docindex = self.builder.add_string(docstring)
 
+        result = bytearray()
+
         prefix = struct.pack(
             "<11L",
             code.co_flags,
@@ -348,8 +350,6 @@ class CodeObject:
             0,  # TODO: location table
             docindex,
         )
-
-        result = bytearray()
         result += prefix
 
         codearray = bytearray()
@@ -450,7 +450,7 @@ class Builder:
             co.finish()
 
     def get_bytes(self) -> bytes:
-        code_section_size = 4 * len(self.codeobjs)
+        code_section_size = 4 + 4 * len(self.codeobjs)
         const_section_size = 4 + 4 * len(self.constants)
         string_section_size = 4 + 4 * len(self.strings)
         blob_section_size = 4 + 4 * len(self.blobs)
@@ -477,6 +477,7 @@ class Builder:
         binary_section_size = len(binary_data)
         prefix_size = (
             16
+            + 4
             + len(code_offsets)
             + 4
             + len(const_offsets)
@@ -485,12 +486,13 @@ class Builder:
             + 4
             + len(blob_offsets)
         )
-        header = b".pyc" + struct.pack(
-            "<HHLL", 0, len(self.codeobjs), 0, prefix_size + binary_section_size
+        header = b"PYC." + struct.pack(
+            "<HHLL", 0, 0, 0, prefix_size + binary_section_size
         )
         assert len(header) == 16
         prefix = (
             header
+            + struct.pack("<L", len(code_offsets) // 4)
             + code_offsets
             + struct.pack("<L", len(const_offsets) // 4)
             + const_offsets
