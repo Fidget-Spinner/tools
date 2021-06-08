@@ -1,4 +1,6 @@
 import dis
+import glob
+import os
 import sys
 
 
@@ -6,8 +8,22 @@ from pyco import Builder, add_everything
 from unpyc import PycFile
 
 
+def expand_args(filenames):
+    for filename in filenames:
+        if "*" in filename and sys.platform == "win32":
+            for fn in glob.glob(filename, recursive=True):
+                yield fn
+        elif os.path.isdir(filename):
+            for root, _, files in os.walk(filename):
+                for fn in files:
+                    if fn.endswith(".py"):
+                        yield os.path.join(root, fn)
+        else:
+            yield filename
+
+
 def main():
-    for filename in sys.argv[1:]:
+    for filename in expand_args(sys.argv[1:]):
         ## print()
         print("=====", filename, "=====")
         with open(filename, "rb") as f:
