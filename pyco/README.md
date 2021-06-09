@@ -1,6 +1,6 @@
 # New PYC Format
 
-Blah, blah. (TODO: Copy from Mark's proto-PEP.)
+Blah, blah. (TODO: Copy motivation from Mark's proto-PEP.)
 
 # Provisional Format Specification
 
@@ -152,16 +152,86 @@ At runtime, a code object is in one of several states:
 
 - **dehydrated**: there's just a pointer to the serialized code object
   in the binary segment, and a pointer to the PYC segment to keep it alive.
+  When a function object is created given a code object, this is used.
+  When the function is _called_, the object transitions to the next state.
 
 - **partially hydrated**: most fields (e.g. `co_flags`) have been filled in,
   except for some constants in `co_consts` and some names in `co_names`,
   and except for the variable names in `co_varnames`, `co_freecvars`,
   and `co_cellvars`. (Note that `co_varnames` may be used for keyword args.)
+  Whenever a constant or name is needed but the corresponding array item
+  is NULL, the constant or name is constructed and stuffed in the array.
+  Constants are constructed by running the code pointed by the corresponding
+  item in const_offsets.
+  Names are constructed by interpreting the offset in the PYC form
+  of the code object as an index in the string_offsets array.
 
 - **fully hydrated**: all constants, names and variable names are filled in.
 
 - **compiled**: everything is filled in,
   and there's no pointer to a PYC segment.
+
+### How to create a fully dehydrated code object
+
+(**NOTE:** This research was done using the latest "main" branch.)
+
+This should create a code object with the following properties:
+
+- Quickly recognizable as fully dehydrated
+  (since this check must happen on every single call)
+- Contains a pointer to the PYC from which it was loaded
+- Allows finding the data for this code object in the PYC
+  (either an index, or an offset, or a pointer)
+
+The PYC pointer needs to be preserved for partially hydrated code objects.
+Perhaps the `co_firstinstr` member can be used?
+That field is required to execute the code,
+but not for anything else.
+So the check would be
+
+```
+if (code->co_firstinstr == 0 /* UNLIKELY */) {
+    _PyCode_Hydrate(code);
+}
+```
+
+This is attractive because `co_firstinstr` is a "hot" member
+so it should be in the CPU's L1 or L2 cache.
+
+We should use an inline function so we can actually write this:
+
+```
+if (!_PyCode_IsHydrated(code)) {
+    if (!_PyCode_Hydrate(code)) {
+        goto <error_label>;
+    }
+}
+```
+
+Such a block of code should be placed in a few places,
+for example in `_PyEval_EvalFrameDefault()` before we start
+executing the bytecode, but probably also elsewhere --
+for example before accessing a code object from Python.
+Also, whenever any of the following fields are referenced,
+since these are all left NULL.
+
+- co_consts
+- co_names
+- co_code
+- co_firstinstr
+- co_localsplusnames
+- co_localspluskinds
+- co_linetable
+- co_exceptiontable
+- co_cell2arg
+- co_varnames, co_cellvars, co_freevars
+- co_weakreflist
+- co_extra
+- co_quickened
+- co_opcache_map
+- co_opcache
+
+## TODO: Update the pyc writer for the latest 3.11 changes to code objects.
 
 # Things To Do
 
@@ -195,11 +265,11 @@ It ends with a special return opcode, `RETURN_CONSTANT`.
 To execute it, we can have a structure like this:
 
 ```
-struct _constant_invocation_record {
+struct constant_invocation_record {
     u64 last_bytecode_array;
     u64 last_program_counter;
     u64 last_stack_pointer;
-    struct _constant_invocation_record *last_record;
+    struct constant_invocation_record *last_record;
     PyObject *stack[];
 };
 ```
