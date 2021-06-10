@@ -25,3 +25,7 @@ LOAD_COMMON_CONSTANT = def_op(
 RETURN_CONSTANT = def_op("RETURN_CONSTANT", lastop := lastop + 1)
 
 del lastop, def_op
+
+CO_FAST_LOCAL = 0x20
+CO_FAST_FREE = 0x80
+CO_FAST_CELL = 0x40
