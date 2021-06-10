@@ -29,8 +29,7 @@ class Reader:
 
     def read_bytes(self) -> bytes:
         n = self.read_varint()
-        b = self.read_raw_bytes(n)
-        return n
+        return self.read_raw_bytes(n)
 
     def read_short(self) -> int:
         part = self.read_raw_bytes(2)
@@ -38,8 +37,7 @@ class Reader:
 
     def read_long(self) -> int:
         part = self.read_raw_bytes(4)
-        l = struct.unpack("<L", part)[0]
-        return l
+        return struct.unpack("<L", part)[0]
 
     def read_offsets(self, n: int) -> list[int]:
         offsets = []
@@ -154,9 +152,9 @@ class PycFile:
         etindex = reader.read_long()
         # TODO: Technically object 0 is also a string, not None
         docstring = self.get_string(docindex) if docindex else None
-        exceptiontable = self.get_bytes(etindex) if etindex else b""
         kwargs.update(
-            co_exceptiontable = exceptiontable,
+            co_exceptiontable=self.get_bytes(etindex),
+            co_linetable=self.get_bytes(ltindex),
         )
         print(kwargs)
 

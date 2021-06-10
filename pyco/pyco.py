@@ -313,9 +313,8 @@ class CodeObject:
         """
         code = self.value
         self.builder.add_string(code.co_name)
-        exceptiontable = getattr(code, "co_exceptiontable", None)
-        if exceptiontable is not None:
-            self.builder.add_bytes(exceptiontable)
+        self.builder.add_bytes(code.co_linetable)
+        self.builder.add_bytes(code.co_exceptiontable)
         self.builder.add_string(code.co_filename)
         if is_function_code(code) and code.co_consts:
             docstring = code.co_consts[0]
@@ -326,9 +325,8 @@ class CodeObject:
 
     def get_bytes(self) -> bytes:
         code = self.value
-        ltindex = 0  # TODO: line table
-        exceptiontable = getattr(code, "co_exceptiontable", None)
-        etindex = 0 if exceptiontable is None else self.builder.add_bytes(exceptiontable)
+        ltindex = self.builder.add_bytes(code.co_linetable)
+        etindex = self.builder.add_bytes(code.co_exceptiontable)
         docindex = 0
         if is_function_code(code) and code.co_consts:
             docstring = code.co_consts[0]
