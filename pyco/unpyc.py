@@ -42,7 +42,14 @@ class Reader:
         return l
 
     def read_offsets(self, n: int) -> list[int]:
-        return [self.read_long() for _ in range(n)]
+        offsets = []
+        for _ in range(n):
+            offsets.append(self.read_long())
+        return offsets
+
+    def read_sized_offsets(self) -> list[int]:
+        count = self.read_long()
+        return self.read_offsets(count)
 
     def read_varint(self) -> int:
         result = 0
@@ -131,47 +138,46 @@ class PycFile:
         if code is not None:
             return code
         reader = Reader(self.data, self.code_offsets[i])
-        code = dummy_code
+
         kwargs = dict(
-            co_flags=reader.read_long(),
             co_argcount=reader.read_long(),
             co_posonlyargcount=reader.read_long(),
             co_kwonlyargcount=reader.read_long(),
-            co_nlocals=reader.read_long(),
             co_stacksize=reader.read_long(),
-            co_name=self.get_string(reader.read_long()),
-            co_exceptiontable=self.get_bytes(reader.read_long()),
+            co_flags=reader.read_long(),
             co_filename=self.get_string(reader.read_long()),
-            co_locationtable=self.get_bytes(reader.read_long()),
+            co_name=self.get_string(reader.read_long()),
+            co_firstlineno=reader.read_long(),
         )
         docindex = reader.read_long()
-        if docindex:
-            docstring = self.get_string(docindex)
-            print(f"{kwargs['co_name']}: doc={docstring!r}")
-        if not hasattr(code, "co_exceptiontable"):
-            del kwargs["co_exceptiontable"]
-        if not hasattr(code, "co_locationtable"):
-            del kwargs["co_locationtable"]
+        ltindex = reader.read_long()
+        etindex = reader.read_long()
+        # TODO: Technically object 0 is also a string, not None
+        docstring = self.get_string(docindex) if docindex else None
+        exceptiontable = self.get_bytes(etindex) if etindex else b""
+        kwargs.update(
+            co_exceptiontable = exceptiontable,
+        )
         print(kwargs)
+
         ninstrs = reader.read_long()
         kwargs.update(co_code=reader.read_raw_bytes(2 * ninstrs))
-        nvarnames = reader.read_long()
-        offsets = [reader.read_long() for _ in range(nvarnames)]
+
+        localsplusnames = reader.read_sized_offsets()
+        localspluskinds = reader.read_raw_bytes(len(localsplusnames))
+        varnames = [name for name, kind in zip(localsplusnames, localspluskinds)
+                         if kind == CO_FAST_LOCAL]
+        freevars = [name for name, kind in zip(localsplusnames, localspluskinds)
+                         if kind == CO_FAST_FREE]
+        cellvars = [name for name, kind in zip(localsplusnames, localspluskinds)
+                         if kind == CO_FAST_CELL]
         kwargs.update(
-            co_varnames=tuple(self.get_string(i) for i in offsets)
+            co_varnames=tuple(varnames),
+            co_freevars=tuple(freevars),
+            co_cellvars=tuple(cellvars),
         )
-        nfreevars = reader.read_long()
-        offsets = [reader.read_long() for _ in range(nfreevars)]
-        kwargs.update(
-            co_freevars=tuple(self.get_string(i) for i in offsets)
-        )
-        ncellvars = reader.read_long()
-        offsets = [reader.read_long() for _ in range(ncellvars)]
-        kwargs.update(
-            co_cellvars=tuple(self.get_string(i) for i in offsets)
-        )
-        kwargs.update(co_names=tuple(s if isinstance(s, str) else str(type(s)) for s in self.strings))
-        code = code.replace(**kwargs)
+
+        code = dummy_code.replace(**kwargs)
         self.code_objects[i] = code
         return code
 

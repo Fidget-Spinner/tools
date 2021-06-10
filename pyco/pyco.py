@@ -45,6 +45,7 @@ BUILD_SET = dis.opmap["BUILD_SET"]
 EXTENDED_ARG = dis.opmap["EXTENDED_ARG"]
 LOAD_CONST = dis.opmap["LOAD_CONST"]
 
+
 def encode_varint(i: int) -> bytes:
     """LEB128 encoding (https://en.wikipedia.org/wiki/LEB128)"""
     if i == 0:
@@ -325,6 +326,7 @@ class CodeObject:
 
     def get_bytes(self) -> bytes:
         code = self.value
+        ltindex = 0  # TODO: line table
         exceptiontable = getattr(code, "co_exceptiontable", None)
         etindex = 0 if exceptiontable is None else self.builder.add_bytes(exceptiontable)
         docindex = 0
@@ -337,18 +339,17 @@ class CodeObject:
 
         prefix = struct.pack(
             "<11L",
-            code.co_flags,
             code.co_argcount,
             code.co_posonlyargcount,
             code.co_kwonlyargcount,
-            code.co_nlocals,
             code.co_stacksize,
-            self.builder.add_string(code.co_name),
-            etindex,
-            # TODO: The rest should be metadata offsets
+            code.co_flags,
             self.builder.add_string(code.co_filename),
-            0,  # TODO: location table
+            self.builder.add_string(code.co_name),
+            code.co_firstlineno,
             docindex,
+            ltindex,
+            etindex,
         )
         result += prefix
 
@@ -357,23 +358,37 @@ class CodeObject:
         codearray += rewritten_bytecode(code, self.builder)
         result += codearray
 
-        varnames = bytearray()
-        varnames += struct.pack("<L", len(code.co_varnames))
-        for varname in code.co_varnames:
-            varnames += struct.pack("<L", self.builder.add_string(varname))
-        result += varnames
+        names = bytearray()
+        names += struct.pack("<L", len(code.co_names))
+        for name in code.co_names:
+            names += struct.pack("<L", self.builder.add_string(name))
+        result += names
 
-        freevars = bytearray()
-        freevars += struct.pack("<L", len(code.co_freevars))
-        for freevar in code.co_freevars:
-            freevars += struct.pack("<L", self.builder.add_string(freevar))
-        result += freevars
+        nargs = code.co_argcount + code.co_kwonlyargcount
+        # TODO: Bump nargs if *args or **kwds present
+        if set(code.co_varnames[:nargs]) & set(code.co_cellvars) != set():
+            raise RuntimeError(
+                f"a varname is a cell in {code.co_name} "
+                f"in {code.co_filename}:{code.co_firstlineno}"
+                f" -- {set(code.co_varnames[:nargs]) & set(code.co_cellvars)}"
+            )
+        localsplusnames = code.co_varnames + code.co_freevars + code.co_cellvars
+        locals = bytearray()
+        locals += struct.pack("<L", len(localsplusnames))
+        for local in localsplusnames:
+            locals += struct.pack("<L", self.builder.add_string(local))
+        result += locals
 
-        cellvars = bytearray()
-        cellvars += struct.pack("<L", len(code.co_cellvars))
-        for cellvar in code.co_cellvars:
-            cellvars += struct.pack("<L", self.builder.add_string(cellvar))
-        result += cellvars
+        kinds: list[int] = []
+        for name in code.co_varnames:
+            kinds.append(CO_FAST_LOCAL)
+        for name in code.co_freevars:
+            kinds.append(CO_FAST_FREE)
+        for name in code.co_cellvars:
+            kinds.append(CO_FAST_CELL)
+        assert len(kinds) == len(localsplusnames)
+        localspluskinds = bytes(kinds)
+        result += localspluskinds
 
         return bytes(result)
 
