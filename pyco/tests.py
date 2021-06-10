@@ -10,6 +10,7 @@ from unpyc import PycFile
 
 def expand_args(filenames):
     for filename in filenames:
+        filename = os.path.expanduser(filename)
         if "*" in filename and sys.platform == "win32":
             for fn in glob.glob(filename, recursive=True):
                 yield fn
