@@ -355,6 +355,9 @@ class CodeObject:
         codearray += struct.pack("<L", len(code.co_code) // 2)
         codearray += rewritten_bytecode(code, self.builder)
         result += codearray
+        if len(code.co_code) & 1:
+            result += b"\0\0"  # Align to 4
+        assert len(result) & 3 == 0, len(result)
 
         names = bytearray()
         names += struct.pack("<L", len(code.co_names))

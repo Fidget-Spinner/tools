@@ -160,6 +160,9 @@ class PycFile:
 
         ninstrs = reader.read_long()
         kwargs.update(co_code=reader.read_raw_bytes(2 * ninstrs))
+        if ninstrs & 1:
+            reader.read_raw_bytes(2)  # Align to 4
+        assert reader.pos & 3 == 0, reader.pos  # I'm terrible
 
         localsplusnames = reader.read_sized_offsets()
         localspluskinds = reader.read_raw_bytes(len(localsplusnames))
