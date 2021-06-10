@@ -166,11 +166,11 @@ class PycFile:
         localsplusnames = reader.read_sized_offsets()
         localspluskinds = reader.read_raw_bytes(len(localsplusnames))
         varnames = [name for name, kind in zip(localsplusnames, localspluskinds)
-                         if kind == CO_FAST_LOCAL]
+                         if kind == updis.CO_FAST_LOCAL]
         freevars = [name for name, kind in zip(localsplusnames, localspluskinds)
-                         if kind == CO_FAST_FREE]
+                         if kind == updis.CO_FAST_FREE]
         cellvars = [name for name, kind in zip(localsplusnames, localspluskinds)
-                         if kind == CO_FAST_CELL]
+                         if kind == updis.CO_FAST_CELL]
         kwargs.update(
             co_varnames=tuple(varnames),
             co_freevars=tuple(freevars),
@@ -219,7 +219,7 @@ class PycFile:
 def unpyc(data: bytes):
     pyc = PycFile(data)
     pyc.load()
-    ## pyc.report()
+    pyc.report()
     for i in range(len(pyc.code_offsets)):
         print("Code object", i)
         code = pyc.get_code(i)
