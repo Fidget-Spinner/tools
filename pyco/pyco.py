@@ -28,6 +28,7 @@ from __future__ import annotations  # I have forward references
 
 import builtins
 import dis  # Where opname/opmap live, according to the docs
+import io
 import struct
 import sys
 import types
@@ -69,6 +70,20 @@ def encode_signed_varint(i: int) -> bytes:
 
 def encode_float(x: float) -> bytes:
     return struct.pack("<d", x)
+
+
+def decode_varint(data: bytes) -> tuple[int, int]:
+    result = 0
+    shift = 0
+    pos = 0
+    while True:
+        byte = data[pos]
+        pos += 1
+        result |= (byte & 0x7F) << shift
+        shift += 7
+        if not byte & 0x80:
+            break
+    return result, pos
 
 
 class LongInt:
@@ -204,17 +219,19 @@ class ComplexConstant:
 def rewritten_bytecode(code: types.CodeType, builder: Builder) -> bytes:
     """Rewrite some instructions.
     - Replace LOAD_CONST i with LAZY_LOAD_CONSTANT j.
-    - For ops whose argument is a name, replace oparg with 
+    - For ops whose argument is a name, replace oparg with
       corresponding string index.
     """
     instrs = code.co_code
     new = bytearray()
     for i in range(0, len(instrs), 2):
-        opcode, oparg = instrs[i:i+2]
+        opcode, oparg = instrs[i : i + 2]
         if opcode == LOAD_CONST:
             # TODO: Handle EXTENDED_ARG
-            if i >= 2 and instrs[i-2] == EXTENDED_ARG:
-                raise RuntimeError(f"More than 256 constants in original {code.co_name} at line {code.co_firstlineno}")
+            if i >= 2 and instrs[i - 2] == EXTENDED_ARG:
+                raise RuntimeError(
+                    f"More than 256 constants in original {code.co_name} at line {code.co_firstlineno}"
+                )
             value = code.co_consts[oparg]
             if is_immediate(value):
                 if isinstance(value, int):
@@ -242,16 +259,22 @@ def rewritten_bytecode(code: types.CodeType, builder: Builder) -> bytes:
                 opcode = LAZY_LOAD_CONSTANT
                 oparg = builder.add_constant(code.co_consts[oparg])
                 if oparg >= 256:
-                    raise RuntimeError(f"More than 256 constants in {code.co_name} at line {code.co_firstlineno}")
+                    raise RuntimeError(
+                        f"More than 256 constants in {code.co_name} at line {code.co_firstlineno}"
+                    )
         else:
             assert opcode not in dis.hasconst
             if opcode in dis.hasname:
                 # TODO: Handle EXTENDED_ARG
-                if i >= 2 and instrs[i-2] == EXTENDED_ARG:
-                    raise RuntimeError(f"More than 256 names in original {code.co_name} at line {code.co_firstlineno}")
+                if i >= 2 and instrs[i - 2] == EXTENDED_ARG:
+                    raise RuntimeError(
+                        f"More than 256 names in original {code.co_name} at line {code.co_firstlineno}"
+                    )
                 oparg = builder.add_string(code.co_names[oparg])
                 if oparg >= 256:
-                    raise RuntimeError(f"More than 256 names in {code.co_name} at line {code.co_firstlineno}")
+                    raise RuntimeError(
+                        f"More than 256 names in {code.co_name} at line {code.co_firstlineno}"
+                    )
         new.extend((opcode, oparg))
     return new
 
@@ -352,12 +375,14 @@ class CodeObject:
         result += prefix
 
         codearray = bytearray()
-        codearray += struct.pack("<L", len(code.co_code) // 2)
-        codearray += rewritten_bytecode(code, self.builder)
+        new_bytecode = rewritten_bytecode(code, self.builder)
+        n_instrs = len(new_bytecode) // 2
+        if n_instrs & 1:  # Pad code to multiple of 4
+            new_bytecode += b"\0\0"
+        assert len(new_bytecode) & 3 == 0, len(result)
+        codearray += struct.pack("<L", n_instrs)
+        codearray += new_bytecode
         result += codearray
-        if len(code.co_code) & 1:
-            result += b"\0\0"  # Align to 4
-        assert len(result) & 3 == 0, len(result)
 
         names = bytearray()
         names += struct.pack("<L", len(code.co_names))
@@ -395,7 +420,8 @@ class CodeObject:
 
 
 class BytesProducer(Protocol):
-    def get_bytes(self) -> bytes: ...
+    def get_bytes(self) -> bytes:
+        ...
 
 
 class HasValue(Protocol):
@@ -478,6 +504,7 @@ class Builder:
             + blob_section_size
         )
         binary_data = bytearray()
+
         def helper(what: list[BytesProducer]) -> bytearray:
             nonlocal binary_data
             offsets = bytearray()
@@ -535,44 +562,100 @@ def add_everything(builder: Builder, code: types.CodeType):
     builder.finish_code_objects()
 
 
+def build_source(source: str | bytes, filename="<string>") -> Builder:
+    builder = Builder()
+    code = compile(source, filename, "exec", dont_inherit=True)
+    add_everything(builder, code)
+    builder.lock()
+    return builder
+
+
+def serialize_source(source: str | bytes, filename="<string>") -> bytes:
+    builder = build_source(source)
+    data = builder.get_bytes()
+    return data
+
+
 def report(builder: Builder):
-    print("Code table:")
+    print(f"Code table -- {len(builder.codeobjs)} items:")
     # TODO: Format long byte strings nicer, with ASCII on the side, etc.
     for i, co in enumerate(builder.codeobjs):
-        b = co.get_bytes()
-        print(f"{i:4d}: {b.hex(' ')}")
-    print("Constant table:")
+        try:
+            b = co.get_bytes()
+        except RuntimeError as err:
+            print(f"  Code object {i} -- Error: {err}")
+            continue
+        header = struct.unpack("<12L", b[:48])
+        n_instrs = header[-1]
+        bytecode = b[48 : 48 + 2 * n_instrs]
+        print(f"  Code object {i}")
+        print(f"  Header {header}")
+        stream = io.StringIO()
+        dis.dis(bytecode, file=stream)
+        lines = stream.getvalue().splitlines()
+        if len(lines) > 20:
+            lines = lines[:10] + ["        ..."] + lines[-10:]
+        for line in lines:
+            print(line)
+    print(f"Constant table -- {len(builder.constants)} items:")
     for i, constant in enumerate(builder.constants):
         b = constant.get_bytes()
-        print(f"Code for constant {i} (prefix {b[:8].hex(' ')})")
+        stacksize, n_instrs = struct.unpack("<LL", b[:8])
+        bytecode = b[8:]
+        print(
+            f"  Code for constant {i} (stack size {stacksize}, {n_instrs} instructions)"
+        )
         dis.dis(b[8:])
-    print("String table:")
+
+    def helper(i: int, head: str, tail: str):
+        if len(head) + len(tail) <= 72:
+            print(f"{i:4d}: {head} {tail}")
+        else:
+
+            def inner(prefix: str, body: str):
+                if len(body) <= 72:
+                    print(f"{prefix} {body}")
+                else:
+                    print(f"{prefix} {body[:35]} .. {body[-32:]}")
+
+            inner(f"{i:4d}:", head)
+            inner("     ", tail)
+
+    print(f"String table -- {len(builder.strings)} items:")
     for i, string in enumerate(builder.strings):
         b = string.get_bytes()
-        print(f"{i:4d}: {b.hex(' ')} ({b!r})")
-    print("Blob table:")
+        nb, pos = decode_varint(b)
+        head = b.hex(" ")
+        tail = f"({nb}, {repr(b[pos:])})"
+        helper(i, head, tail)
+    print(f"Blob table -- {len(builder.blobs)} items:")
     for i, blob in enumerate(builder.blobs):
         b = blob.get_bytes()
-        print(f"{i:4d}: {b.hex(' ')}")
+        head = b.hex(" ")
+        tail = f"({len(b)}, {b!r})"
+        helper(i, head, tail)
 
 
 def main():
-    builder = Builder()
     if not sys.argv[1:]:
+        builder = Builder()
         builder.add_constant(
             (0, 1000, -1, "Hello world", "你好", b"hello world", 3.14, 0.5j)
         )
     else:
         filename = sys.argv[1]
         with open(filename, "rb") as f:
-            code = compile(f.read(), filename, "exec")
-        add_everything(builder, code)
-    builder.lock()
+            source = f.read()
+            builder = build_source(source, filename)
     report(builder)
-    pyc_data = builder.get_bytes()
-    with open("example.pyc", "wb") as f:
-        f.write(pyc_data)
-    print(f"Wrote {len(pyc_data)} bytes to example.pyc")
+    try:
+        pyc_data = builder.get_bytes()
+    except RuntimeError as err:
+        print("Cannot write example.pyc:", err)
+    else:
+        with open("example.pyc", "wb") as f:
+            f.write(pyc_data)
+        print(f"Wrote {len(pyc_data)} bytes to example.pyc")
 
 
 if __name__ == "__main__":

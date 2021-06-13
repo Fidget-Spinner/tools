@@ -1,9 +1,16 @@
-"""Add extra opcodes directly to dis/opcode."""
+"""Add extra opcodes directly to dis/opcode .
+
+Opcodes that already exist must match the definitions here.
+"""
 
 import dis
 
 
 def def_op(name: str, op: int) -> int:
+    if name in dis.opmap:
+        assert dis.opmap[name] == op, (name, op, dis.opmap[name])
+        assert dis.opname[op] == name, (name, op, dis.opname[op])
+        return op
     dis.opname[op] = name
     dis.opmap[name] = op
     return op
