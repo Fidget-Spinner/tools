@@ -17,15 +17,17 @@ except ImportError:
     runner.bench_time_func = staticmethod(lambda desc, func: func(40_000_000))
 
 def bench_pycfunc_noargs(loops):
+    """METH_NOARGS"""
     range_it = range(loops)
     t0 = pyperf.perf_counter()
 
     for _ in range_it:
-        globals()
+        locals()
 
     return pyperf.perf_counter() - t0
 
 def bench_pycfunc_o(loops):
+    """METH_O"""
     range_it = range(loops)
     val = ''
     t0 = pyperf.perf_counter()
@@ -36,6 +38,7 @@ def bench_pycfunc_o(loops):
     return pyperf.perf_counter() - t0    
 
 def bench_pycfunc_fast(loops):
+    """METH_FASTCALL"""
     range_it = range(loops)
     t0 = pyperf.perf_counter()
 
@@ -45,6 +48,7 @@ def bench_pycfunc_fast(loops):
     return pyperf.perf_counter() - t0    
 
 def bench_pycfunc_fast_with_keywords(loops):
+    """METH_FASTCALL | METH_KEYWORDS"""
     range_it = range(loops)
     val = (1,)
     t0 = pyperf.perf_counter()
@@ -55,6 +59,7 @@ def bench_pycfunc_fast_with_keywords(loops):
     return pyperf.perf_counter() - t0    
 
 def bench_pycfunc_with_keywords(loops):
+    """METH_VARARGS | METH_KEYWORDS"""
     range_it = range(loops)
     val = (1,)    
     t0 = pyperf.perf_counter()
@@ -67,15 +72,16 @@ def bench_pycfunc_with_keywords(loops):
 if __name__ == "__main__":
     if HAS_PYPERF:
         runner = pyperf.Runner()
+        runner.min_time = 1
         runner.metadata["description"] = "Bench CALL_FUNCTION opcode for builtins"
 
     benches = (
-        runner.bench_time_func("METH_NOARGS", bench_pycfunc_noargs),
-        runner.bench_time_func("METH_O", bench_pycfunc_o),
-        runner.bench_time_func("METH_FASTCALL", bench_pycfunc_fast),
-        runner.bench_time_func("METH_FASTCALL | METH_KEYWORDS",
+        runner.bench_time_func("locals", bench_pycfunc_noargs),
+        runner.bench_time_func("len", bench_pycfunc_o),
+        runner.bench_time_func("getattr", bench_pycfunc_fast),
+        runner.bench_time_func("sorted",
             bench_pycfunc_fast_with_keywords),
-        runner.bench_time_func("METH_VARARGS | METH_KEYWORDS",
+        runner.bench_time_func("max",
             bench_pycfunc_with_keywords),
     )
     if not HAS_PYPERF:
