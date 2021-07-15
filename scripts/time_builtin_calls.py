@@ -9,12 +9,11 @@ try:
     import pyperf
     HAS_PYPERF = True
 except ImportError:
-    print("No pyperf, falling back on timeit. Results may be less accurate.")
     import time
     class pyperf: ...
     pyperf.perf_counter = staticmethod(time.process_time)
     class runner: ...
-    runner.bench_time_func = staticmethod(lambda desc, func: func(40_000_000))
+    runner.bench_time_func = staticmethod(lambda desc, func: func(8_000_000))
 
 def bench_pycfunc_noargs(loops):
     """METH_NOARGS"""
@@ -22,6 +21,15 @@ def bench_pycfunc_noargs(loops):
     t0 = pyperf.perf_counter()
 
     for _ in range_it:
+        locals()
+        locals()
+        locals()
+        locals()
+        locals()
+        locals()
+        locals()
+        locals()
+        locals()
         locals()
 
     return pyperf.perf_counter() - t0
@@ -34,8 +42,17 @@ def bench_pycfunc_o(loops):
 
     for _ in range_it:
         len(val)
+        len(val)
+        len(val)
+        len(val)
+        len(val)
+        len(val)
+        len(val)
+        len(val)
+        len(val)
+        len(val)
 
-    return pyperf.perf_counter() - t0    
+    return pyperf.perf_counter() - t0
 
 def bench_pycfunc_fast(loops):
     """METH_FASTCALL"""
@@ -44,8 +61,17 @@ def bench_pycfunc_fast(loops):
 
     for _ in range_it:
         getattr(None, '', None)
+        getattr(None, '', None)
+        getattr(None, '', None)
+        getattr(None, '', None)
+        getattr(None, '', None)
+        getattr(None, '', None)
+        getattr(None, '', None)
+        getattr(None, '', None)
+        getattr(None, '', None)
+        getattr(None, '', None)
 
-    return pyperf.perf_counter() - t0    
+    return pyperf.perf_counter() - t0
 
 def bench_pycfunc_fast_with_keywords(loops):
     """METH_FASTCALL | METH_KEYWORDS"""
@@ -55,8 +81,17 @@ def bench_pycfunc_fast_with_keywords(loops):
 
     for _ in range_it:
         sorted(val)
+        sorted(val)
+        sorted(val)
+        sorted(val)
+        sorted(val)
+        sorted(val)
+        sorted(val)
+        sorted(val)
+        sorted(val)
+        sorted(val)
 
-    return pyperf.perf_counter() - t0    
+    return pyperf.perf_counter() - t0
 
 def bench_pycfunc_with_keywords(loops):
     """METH_VARARGS | METH_KEYWORDS"""
@@ -66,8 +101,17 @@ def bench_pycfunc_with_keywords(loops):
     
     for _ in range_it:
         max(val)
+        max(val)
+        max(val)
+        max(val)
+        max(val)
+        max(val)
+        max(val)
+        max(val)
+        max(val)
+        max(val)
 
-    return pyperf.perf_counter() - t0    
+    return pyperf.perf_counter() - t0
 
 if __name__ == "__main__":
     if HAS_PYPERF:
@@ -85,6 +129,7 @@ if __name__ == "__main__":
             bench_pycfunc_with_keywords),
     )
     if not HAS_PYPERF:
+        print("No pyperf, falling back on timeit. Results may be less accurate.")
         for bench in benches:
-            print(f"Took: {bench}s")
+            print(f"Took: {bench}s or {bench/8_000_000}s per iteration")
 
